@@ -1057,7 +1057,7 @@
           <hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar">
             <hh:margin>
               <hc:intent value="0" unit="HWPUNIT"/>
-              <hc:left value="600" unit="HWPUNIT"/>
+              <hc:left value="1200" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
               <hc:next value="0" unit="HWPUNIT"/>
@@ -1086,7 +1086,7 @@
           <hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar">
             <hh:margin>
               <hc:intent value="0" unit="HWPUNIT"/>
-              <hc:left value="1200" unit="HWPUNIT"/>
+              <hc:left value="2400" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
               <hc:next value="0" unit="HWPUNIT"/>
@@ -1115,7 +1115,7 @@
           <hp:case hp:required-namespace="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar">
             <hh:margin>
               <hc:intent value="0" unit="HWPUNIT"/>
-              <hc:left value="1800" unit="HWPUNIT"/>
+              <hc:left value="3600" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
               <hc:next value="0" unit="HWPUNIT"/>
