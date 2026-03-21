@@ -777,6 +777,7 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 24. **charPr borderFillIDRef="1" 고정**: 다른 값이면 글자마다 박스 표시됨
 25. **styleIDRef="0" 통일**: 다른 파일 병합 시 모든 문단의 styleIDRef를 "0"으로 변경 (스타일 기반 재정렬 방지)
 26. **ZIP 기반 파일 선택**: header가 큰(스타일 많은) 파일을 기반으로 사용. settings.xml/META-INF도 같은 파일에서 가져와야 호환
+27. **글머리기호/번호는 텍스트로 삽입**: 한글의 `<hp:numbering>` 구조를 사용하지 않는다. 목록은 `"- 항목"`, `"1. 항목"` 텍스트를 직접 넣고 paraPr 들여쓰기로 단계를 표현. 의도적 설계 — 호환성과 단순성을 위해 네이티브 글머리기호를 사용하지 않음
 
 ---
 
