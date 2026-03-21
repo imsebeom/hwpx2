@@ -641,7 +641,35 @@ HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 # 2. Part 2 문단 ID 오프셋 (충돌 방지)
 # 3. 페이지 넘김 문단 삽입 후 Part 2 문단 추가
 # 4. Part 1 기반으로 ZIP 조립 (section0.xml만 교체)
+# 5. ★ content.hpf에 모든 BinData 등록 (아래 참조)
 ```
+
+> **⚠️ 이미지 포함 파일 병합 시 content.hpf 필수 업데이트**
+>
+> 기반 파일의 content.hpf만 복사하면, **다른 파일의 이미지가 hpf에 미등록되어 한컴에서 엑스박스로 표시된다.**
+> 병합 후 반드시 모든 BinData를 스캔하여 누락 항목을 content.hpf에 등록해야 한다.
+>
+> ```python
+> import re
+> # 병합 완료 후
+> with zipfile.ZipFile(output, "r") as z:
+>     hpf = z.read("Contents/content.hpf").decode("utf-8")
+>     existing = set(re.findall(r'<opf:item id="([^"]+)"[^>]*BinData', hpf))
+>     new_items = ""
+>     for name in z.namelist():
+>         if name.startswith("BinData/"):
+>             fname = name.split("/", 1)[1]
+>             img_id = fname.rsplit(".", 1)[0]
+>             if img_id not in existing:
+>                 ext = fname.rsplit(".", 1)[-1].lower()
+>                 mime = {"jpg":"image/jpeg","jpeg":"image/jpeg","png":"image/png",
+>                         "bmp":"image/bmp"}.get(ext, "image/png")
+>                 new_items += (f'<opf:item id="{img_id}" href="BinData/{fname}" '
+>                               f'media-type="{mime}" isEmbeded="1"/>')
+>     if new_items:
+>         hpf = hpf.replace("</opf:manifest>", new_items + "</opf:manifest>")
+>         # ZIP 재패킹하여 content.hpf 교체
+> ```
 
 ### 케이스 B: 다른 템플릿/스타일의 파일 병합 (★ 복잡)
 
@@ -841,6 +869,7 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 24. **charPr borderFillIDRef="1" 고정**: 다른 값이면 글자마다 박스 표시됨
 25. **styleIDRef="0" 통일**: 다른 파일 병합 시 모든 문단의 styleIDRef를 "0"으로 변경 (스타일 기반 재정렬 방지)
 26. **ZIP 기반 파일 선택**: header가 큰(스타일 많은) 파일을 기반으로 사용. settings.xml/META-INF도 같은 파일에서 가져와야 호환
+28. **병합 시 content.hpf 필수 업데이트**: 기반 파일의 content.hpf만 복사하면 다른 파일의 이미지가 hpf에 미등록되어 엑스박스 표시. 병합 후 모든 BinData를 스캔하여 누락 항목을 `<opf:item>` 태그로 content.hpf에 등록해야 한다
 27. **글머리기호/번호는 텍스트로 삽입**: 한글의 `<hp:numbering>` 구조를 사용하지 않는다. 목록은 `"- 항목"`, `"1. 항목"` 텍스트를 직접 넣고 paraPr 들여쓰기로 단계를 표현. 의도적 설계 — 호환성과 단순성을 위해 네이티브 글머리기호를 사용하지 않음
 
 ---
