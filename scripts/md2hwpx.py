@@ -43,6 +43,8 @@ STYLE_PROFILES = {
         "h2":           {"charPr": "8",  "paraPr": "0"},   # 14pt 볼드
         "h3":           {"charPr": "13", "paraPr": "27"},  # 12pt 볼드 돋움, 섹션헤더
         "h4":           {"charPr": "10", "paraPr": "0"},   # 10pt 볼드+밑줄
+        "h5":           {"charPr": "9",  "paraPr": "0"},   # 10pt 볼드
+        "h6":           {"charPr": "0",  "paraPr": "0"},   # 10pt 일반 (본문과 동일)
         "body":         {"charPr": "0",  "paraPr": "0"},   # 10pt 바탕
         "bold":         {"charPr": "9"},                    # 10pt 볼드
         "small":        {"charPr": "11", "paraPr": "0"},   # 9pt
@@ -58,6 +60,8 @@ STYLE_PROFILES = {
         "h2":           {"charPr": "8",  "paraPr": "0"},
         "h3":           {"charPr": "10", "paraPr": "0"},
         "h4":           {"charPr": "0",  "paraPr": "0"},
+        "h5":           {"charPr": "10", "paraPr": "0"},
+        "h6":           {"charPr": "0",  "paraPr": "0"},
         "body":         {"charPr": "0",  "paraPr": "0"},
         "bold":         {"charPr": "10"},
         "small":        {"charPr": "9",  "paraPr": "0"},
@@ -73,6 +77,8 @@ STYLE_PROFILES = {
         "h2":           {"charPr": "3",  "paraPr": "0"},
         "h3":           {"charPr": "0",  "paraPr": "0"},
         "h4":           {"charPr": "0",  "paraPr": "0"},
+        "h5":           {"charPr": "0",  "paraPr": "0"},
+        "h6":           {"charPr": "0",  "paraPr": "0"},
         "body":         {"charPr": "0",  "paraPr": "0"},
         "bold":         {"charPr": "0"},
         "small":        {"charPr": "0",  "paraPr": "0"},
@@ -435,8 +441,8 @@ def md_to_section(md_text: str, template: str = "report") -> tuple[str, str]:
             i += 1
             continue
 
-        # 제목 (# ~ ####)
-        heading_match = re.match(r'^(#{1,4})\s+(.+)$', stripped)
+        # 제목 (# ~ ######)
+        heading_match = re.match(r'^(#{1,6})\s+(.+)$', stripped)
         if heading_match:
             level = len(heading_match.group(1))
             heading_text = strip_markdown_formatting(heading_match.group(2))
@@ -449,13 +455,16 @@ def md_to_section(md_text: str, template: str = "report") -> tuple[str, str]:
                 builder.add_empty_line()
             elif level == 2:
                 builder.add_empty_line()
-                # 섹션 번호 매기기
                 builder.add_paragraph(heading_text, "h2")
                 builder.add_empty_line()
             elif level == 3:
                 builder.add_paragraph(heading_text, "h3")
             elif level == 4:
                 builder.add_paragraph(heading_text, "h4")
+            elif level == 5:
+                builder.add_paragraph(heading_text, "h5")
+            elif level == 6:
+                builder.add_paragraph(heading_text, "h6")
             i += 1
             continue
 
