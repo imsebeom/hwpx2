@@ -133,6 +133,70 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" result.hwpx
 - 줄간격: 160% (report 템플릿 기본값)
 - 표/이미지: `treatAsChar="1"` (글자처럼 취급)
 
+### 서식 후처리 (페이지넘김·빈줄 삽입)
+
+md2hwpx.py는 모든 문단을 연속 배치한다. 헤딩 앞 페이지넘김, 빈 줄 등은 section0.xml을 후처리하여 삽입한다.
+
+```python
+import zipfile, re, os
+
+def format_spacing(hwpx_path):
+    """
+    report 템플릿 기준:
+    - ## (charPrIDRef="8") 앞에 pageBreak="1"
+    - ### (charPrIDRef="13") 앞에 빈 줄
+    - 표(</hp:tbl>) 뒤에 빈 줄
+    """
+    with zipfile.ZipFile(str(hwpx_path), "r") as z:
+        section = z.read("Contents/section0.xml").decode("utf-8")
+
+    pid = 900000
+
+    def empty_para():
+        nonlocal pid; pid += 1
+        return (f'<hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" '
+                f'pageBreak="0" columnBreak="0" merged="0">'
+                f'<hp:run charPrIDRef="0"><hp:t/></hp:run></hp:p>')
+
+    # 1. ## 헤딩 → pageBreak="1"
+    for m in re.finditer(r'<hp:p\s[^>]*?pageBreak="0"[^>]*>', section):
+        run_area = section[m.start():m.start()+500]
+        if 'charPrIDRef="8"' in run_area:
+            old_tag = section[m.start():m.end()]
+            section = section[:m.start()] + old_tag.replace(
+                'pageBreak="0"', 'pageBreak="1"') + section[m.end():]
+
+    # 2. ### 헤딩 앞에 빈 줄 (뒤→앞 삽입)
+    h3_pos = [m.start() for m in re.finditer(
+        r'<hp:p\s[^>]*?pageBreak="[01]"[^>]*>', section)
+        if 'charPrIDRef="13"' in section[m.start():m.start()+500]]
+    for pos in reversed(h3_pos):
+        section = section[:pos] + empty_para() + "\n" + section[pos:]
+
+    # 3. 표 뒤 빈 줄
+    tbl_ends = [section.find('</hp:p>', m.end()) + 7
+                for m in re.finditer(r'</hp:tbl>', section)]
+    for pos in reversed(tbl_ends):
+        if pos > 0 and not section[pos:pos+50].strip().startswith('</hs:sec>'):
+            section = section[:pos] + "\n" + empty_para() + section[pos:]
+
+    # ZIP 재패킹
+    tmp = str(hwpx_path) + ".tmp"
+    with zipfile.ZipFile(str(hwpx_path), "r") as zin:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == "Contents/section0.xml":
+                    zout.writestr(item, section.encode("utf-8"))
+                elif item.filename == "mimetype":
+                    zout.writestr(item, zin.read(item.filename),
+                                  compress_type=zipfile.ZIP_STORED)
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+    os.replace(tmp, str(hwpx_path))
+```
+
+> charPrIDRef 값은 템플릿에 따라 다르다. report 기준: `8`=##, `13`=###. 다른 템플릿은 `references/template-styles.md` 참조.
+
 ### 이미지 인라인 삽입 (md2hwpx.py 생성 후)
 
 md2hwpx.py는 이미지를 자동 삽입하지 않는다. 생성 후 별도로 삽입해야 한다.
