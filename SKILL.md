@@ -650,7 +650,10 @@ if tag in ("tc", "tbl"):
         elem.set("borderFillIDRef", str(borderFill_map[int(bf)]))
 ```
 
-> 실제 구현 예시: `merge_final.py` 참조
+> 실제 구현: `scripts/merge_hwpx.py` — CLI로 직접 실행 가능:
+> ```bash
+> python3 "${CLAUDE_SKILL_DIR}/scripts/merge_hwpx.py" file1.hwpx file2.hwpx -o merged.hwpx --base 2 --order 12 --img-prefix "plan_"
+> ```
 
 ### 주의사항 (공통)
 
