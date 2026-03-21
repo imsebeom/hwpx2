@@ -399,3 +399,75 @@ def update_content_hpf(hwpx_path, images):
                 else:
                     zout.writestr(item, data)
     os.replace(tmp, str(hwpx_path))
+
+
+def insert_image_at(hwpx_path, img_path, anchor_text, width_mm=120,
+                    position="before", parapr="0", output_path=None):
+    """
+    이미지를 anchor_text가 포함된 문단 앞/뒤에 인라인 삽입한다.
+    4단계(ZIP추가+hpf등록+pic생성+재패킹)를 단일 호출로 처리.
+
+    Args:
+        hwpx_path: 대상 HWPX 파일 경로
+        img_path: 삽입할 이미지 파일 경로
+        anchor_text: 삽입 위치를 결정하는 텍스트 (이 텍스트가 포함된 문단 앞/뒤)
+        width_mm: 이미지 표시 폭 (mm, 기본 120mm). 높이는 비율 자동 계산.
+        position: "before" (문단 앞) 또는 "after" (문단 뒤)
+        parapr: 이미지 문단의 paraPrIDRef (기본 "0")
+        output_path: 출력 경로. None이면 원본 덮어쓰기.
+    """
+    import re
+    from PIL import Image
+
+    hwpx_path = str(hwpx_path)
+    img_path = str(img_path)
+    out = output_path or hwpx_path
+
+    with Image.open(img_path) as im:
+        w_px, h_px = im.size
+    w_hu = int(width_mm * 283.5)
+    h_hu = int(w_hu * h_px / w_px)
+
+    fname = os.path.basename(img_path)
+    img_id = fname.rsplit(".", 1)[0]
+
+    with zipfile.ZipFile(hwpx_path, "r") as zin:
+        section = zin.read("Contents/section0.xml").decode("utf-8")
+        hpf = zin.read("Contents/content.hpf").decode("utf-8")
+
+        pic_xml = make_image_para(img_id, width=w_hu, height=h_hu, parapr=parapr)
+
+        match = re.search(re.escape(anchor_text), section)
+        if not match:
+            raise ValueError(f"anchor_text '{anchor_text}' not found in section0.xml")
+
+        if position == "before":
+            p_start = section.rfind("<hp:p", 0, match.start())
+            section = section[:p_start] + pic_xml + "\n" + section[p_start:]
+        else:
+            p_end = section.find("</hp:p>", match.end()) + len("</hp:p>")
+            section = section[:p_end] + "\n" + pic_xml + section[p_end:]
+
+        ext = fname.rsplit(".", 1)[-1].lower()
+        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
+                "png": "image/png", "bmp": "image/bmp",
+                "gif": "image/gif"}.get(ext, "image/png")
+        hpf_item = (f'<opf:item id="{img_id}" href="BinData/{fname}" '
+                    f'media-type="{mime}" isEmbeded="1"/>')
+        hpf = hpf.replace("</opf:manifest>", hpf_item + "</opf:manifest>")
+
+        tmp = out + ".tmp"
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename == "Contents/section0.xml":
+                    zout.writestr(item, section.encode("utf-8"))
+                elif item.filename == "Contents/content.hpf":
+                    zout.writestr(item, hpf.encode("utf-8"))
+                elif item.filename == "mimetype":
+                    zout.writestr(item, zin.read(item.filename),
+                                  compress_type=zipfile.ZIP_STORED)
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+            zout.write(img_path, f"BinData/{fname}")
+
+    os.replace(tmp, out)

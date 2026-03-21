@@ -48,6 +48,9 @@ STYLE_PROFILES = {
         "h6":           {"charPr": "0",  "paraPr": "0"},   # 10pt 일반 (본문과 동일)
         "body":         {"charPr": "0",  "paraPr": "0"},   # 10pt 바탕
         "bold":         {"charPr": "9"},                    # 10pt 볼드
+        "italic":       {"charPr": "0"},                    # 이탤릭 (charPr 0 기반, 텍스트로 구분)
+        "underline":    {"charPr": "0"},                    # 밑줄
+        "strikethrough":{"charPr": "0"},                    # 취소선
         "small":        {"charPr": "11", "paraPr": "0"},   # 9pt
         "quote":        {"charPr": "11", "paraPr": "24"},  # 9pt, 들여쓰기
         "list_l1":      {"charPr": "0",  "paraPr": "24"},  # 들여쓰기 1
@@ -65,6 +68,9 @@ STYLE_PROFILES = {
         "h6":           {"charPr": "0",  "paraPr": "0"},
         "body":         {"charPr": "0",  "paraPr": "0"},
         "bold":         {"charPr": "10"},
+        "italic":       {"charPr": "0"},
+        "underline":    {"charPr": "0"},
+        "strikethrough":{"charPr": "0"},
         "small":        {"charPr": "9",  "paraPr": "0"},
         "quote":        {"charPr": "9",  "paraPr": "0"},
         "list_l1":      {"charPr": "0",  "paraPr": "0"},
@@ -82,6 +88,9 @@ STYLE_PROFILES = {
         "h6":           {"charPr": "0",  "paraPr": "0"},
         "body":         {"charPr": "0",  "paraPr": "0"},
         "bold":         {"charPr": "0"},
+        "italic":       {"charPr": "0"},
+        "underline":    {"charPr": "0"},
+        "strikethrough":{"charPr": "0"},
         "small":        {"charPr": "0",  "paraPr": "0"},
         "quote":        {"charPr": "0",  "paraPr": "0"},
         "list_l1":      {"charPr": "0",  "paraPr": "0"},
@@ -351,17 +360,32 @@ class SectionBuilder:
 # ─── 마크다운 파서 ───────────────────────────────────────────────
 
 def parse_inline_bold(text: str) -> list[tuple[str, str]]:
-    """**볼드** 마크다운을 분리하여 [(style_key, text), ...] 반환."""
-    parts = re.split(r'\*\*(.+?)\*\*', text)
-    result = []
-    for i, part in enumerate(parts):
-        if not part:
-            continue
-        if i % 2 == 0:
-            result.append(("body", part))
-        else:
-            result.append(("bold", part))
-    return result
+    """**볼드**, *이탤릭*, ~~취소선~~, <u>밑줄</u> 마크다운을 분리.
+    [(style_key, text), ...] 반환. style_key: body, bold, italic, underline, strikethrough"""
+    # 토큰화: **bold** → bold, *italic* → italic, ~~strike~~ → strikethrough, <u>underline</u> → underline
+    tokens = []
+    pattern = re.compile(
+        r'\*\*(.+?)\*\*'         # **bold**
+        r'|(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)'  # *italic* (not **)
+        r'|~~(.+?)~~'            # ~~strikethrough~~
+        r'|<u>(.+?)</u>'         # <u>underline</u>
+    )
+    last = 0
+    for m in pattern.finditer(text):
+        if m.start() > last:
+            tokens.append(("body", text[last:m.start()]))
+        if m.group(1):
+            tokens.append(("bold", m.group(1)))
+        elif m.group(2):
+            tokens.append(("italic", m.group(2)))
+        elif m.group(3):
+            tokens.append(("strikethrough", m.group(3)))
+        elif m.group(4):
+            tokens.append(("underline", m.group(4)))
+        last = m.end()
+    if last < len(text):
+        tokens.append(("body", text[last:]))
+    return tokens if tokens else [("body", text)]
 
 
 def strip_markdown_formatting(text: str) -> str:
