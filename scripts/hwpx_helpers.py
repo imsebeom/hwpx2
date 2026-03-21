@@ -15,6 +15,11 @@ import os
 import re
 import zipfile
 
+MIME_MAP = {
+    "jpg": "image/jpeg", "jpeg": "image/jpeg",
+    "png": "image/png", "bmp": "image/bmp", "gif": "image/gif",
+}
+
 # --- 네임스페이스 선언 (section0.xml 루트에 사용) ---
 NS_DECL = (
     'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '
@@ -387,8 +392,7 @@ def update_content_hpf(hwpx_path, images):
                     items = ""
                     for img in images:
                         ext = img["file"].rsplit(".", 1)[-1].lower()
-                        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                                "png": "image/png", "bmp": "image/bmp"}[ext]
+                        mime = MIME_MAP.get(ext, "image/png")
                         items += (f'<opf:item id="{img["id"]}" '
                                   f'href="BinData/{img["file"]}" '
                                   f'media-type="{mime}" isEmbeded="1"/>')
@@ -449,9 +453,7 @@ def insert_image_at(hwpx_path, img_path, anchor_text, width_mm=120,
             section = section[:p_end] + "\n" + pic_xml + section[p_end:]
 
         ext = fname.rsplit(".", 1)[-1].lower()
-        mime = {"jpg": "image/jpeg", "jpeg": "image/jpeg",
-                "png": "image/png", "bmp": "image/bmp",
-                "gif": "image/gif"}.get(ext, "image/png")
+        mime = MIME_MAP.get(ext, "image/png")
         hpf_item = (f'<opf:item id="{img_id}" href="BinData/{fname}" '
                     f'media-type="{mime}" isEmbeded="1"/>')
         hpf = hpf.replace("</opf:manifest>", hpf_item + "</opf:manifest>")

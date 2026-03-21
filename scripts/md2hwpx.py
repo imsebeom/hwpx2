@@ -359,19 +359,22 @@ class SectionBuilder:
 
 # ─── 마크다운 파서 ───────────────────────────────────────────────
 
+_INLINE_PATTERN = re.compile(
+    r'\*\*(.+?)\*\*'                          # **bold**
+    r'|(?<!\*)\*(?!\*)(.+?)\*(?!\*)'          # *italic* (not **)
+    r'|~~(.+?)~~'                             # ~~strikethrough~~
+    r'|<u>(.+?)</u>'                          # <u>underline</u>
+)
+
+
 def parse_inline_bold(text: str) -> list[tuple[str, str]]:
     """**볼드**, *이탤릭*, ~~취소선~~, <u>밑줄</u> 마크다운을 분리.
-    [(style_key, text), ...] 반환. style_key: body, bold, italic, underline, strikethrough"""
-    # 토큰화: **bold** → bold, *italic* → italic, ~~strike~~ → strikethrough, <u>underline</u> → underline
+    [(style_key, text), ...] 반환. style_key: body, bold, italic, underline, strikethrough
+    주의: italic/underline/strikethrough는 파싱되지만, 현재 charPr "0"(본문)으로 출력됨.
+    header.xml에 해당 charPr 추가 시 시각적 구분 가능."""
     tokens = []
-    pattern = re.compile(
-        r'\*\*(.+?)\*\*'         # **bold**
-        r'|(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)'  # *italic* (not **)
-        r'|~~(.+?)~~'            # ~~strikethrough~~
-        r'|<u>(.+?)</u>'         # <u>underline</u>
-    )
     last = 0
-    for m in pattern.finditer(text):
+    for m in _INLINE_PATTERN.finditer(text):
         if m.start() > last:
             tokens.append(("body", text[last:m.start()]))
         if m.group(1):
