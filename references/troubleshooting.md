@@ -89,6 +89,40 @@ section_xml = section_xml[:p_start] + pic_xml + "\n" + section_xml[p_start:]
 # 4. 재패킹 + fix_namespaces
 ```
 
+## "병합 후 글꼴이 달라짐"
+
+| 원인 | 해결 |
+|------|------|
+| charPr의 fontRef가 원본 header의 폰트 ID를 참조하지만, 대상 header에서는 같은 ID가 다른 폰트 | 폰트 이름 기반으로 ID 리맵: 원본 header에서 폰트 이름→ID 매핑, 대상 header에서 같은 이름의 ID를 찾아 교체 |
+
+## "병합 후 의도하지 않은 제목이 문서 앞에 표시됨"
+
+| 원인 | 해결 |
+|------|------|
+| secPr 문단 안에 제목 텍스트 run이 포함되어 있음 | secPr 문단에서 텍스트가 있는 run을 제거: `first_para.remove(run)` |
+| styleIDRef가 제목 스타일을 참조하여 한글이 내용을 재정렬 | 모든 styleIDRef를 "0"으로 통일 |
+
+## "병합 후 표가 파란색/배경색으로 물듦"
+
+| 원인 | 해결 |
+|------|------|
+| 원본 header의 borderFill을 복사했으나 배경색(fillBrush)이 포함 | borderFill을 복사하지 말고, 깨끗한 borderFill을 직접 생성 (SOLID 테두리, 배경 없음) |
+| 표 borderFillIDRef가 대상 header의 다른 borderFill을 참조 | 표 셀(tc/tbl)의 borderFillIDRef만 새로 생성한 깨끗한 borderFill ID로 리맵 |
+
+## "병합 후 글자마다 박스가 표시됨"
+
+| 원인 | 해결 |
+|------|------|
+| charPr의 borderFillIDRef가 테두리가 있는 borderFill을 참조 | charPr 복사 시 `borderFillIDRef="1"` (테두리 없음)으로 고정 |
+| paraPr의 border borderFillIDRef가 SOLID 테두리를 참조 | paraPr 복사 시 border `borderFillIDRef="1"`로 고정 |
+
+## "병합 시 파일 오류 (한글에서 열리지 않음)"
+
+| 원인 | 해결 |
+|------|------|
+| FILE1의 메타파일(settings.xml, META-INF)과 FILE2의 header.xml 혼용 | 하나의 파일을 완전한 기반으로 사용 (header + settings + META-INF 모두 같은 파일에서) |
+| ZIP을 두 번 열어서 쓰기 (append 모드 사용) | 단일 패스로 ZIP 조립 |
+
 ## "python-hwpx 에러"
 
 | 원인 | 해결 |

@@ -562,110 +562,106 @@ with HwpxFormFiller("공문.hwpx") as doc:
 
 ## 워크플로우 I: HWPX 병합 (여러 파일을 하나로)
 
-> **여러 HWPX 파일의 section0.xml 문단을 하나로 합친다.**
-> 반드시 **lxml 파서**를 사용하여 문단 단위로 복사해야 한다. 정규식으로 XML을 자르면 태그 불일치 오류 발생.
+> 반드시 **lxml 파서**를 사용하여 문단 단위로 복사. 정규식으로 XML을 자르면 태그 불일치 오류 발생.
 
-### 병합 원리
+### 케이스 A: 같은 템플릿으로 만든 파일끼리 (간단)
 
-1. Part 1의 `section0.xml`을 기반으로 사용 (secPr/페이지 설정 유지)
-2. Part 2+의 첫 문단(secPr/ctrl 포함)은 건너뛰기
-3. Part 2+ 문단의 ID를 오프셋하여 충돌 방지
-4. 페이지 넘김 문단(`pageBreak="1"`)을 파트 사이에 삽입
-5. Part 2+의 BinData 이미지를 ZIP에 추가 + content.hpf 등록
-
-### Python 코드
+같은 header.xml을 공유하므로 charPr/paraPr 리맵 불필요.
 
 ```python
-import zipfile, os, sys, subprocess
 from lxml import etree
-from pathlib import Path
 from copy import deepcopy
-
-SKILL_DIR = Path("${CLAUDE_SKILL_DIR}")
-sys.path.insert(0, str(SKILL_DIR / "scripts"))
-from hwpx_helpers import update_content_hpf
-
 HP = "http://www.hancom.co.kr/hwpml/2011/paragraph"
 
-# 1. 양쪽 section0.xml 파싱
-with zipfile.ZipFile("part1.hwpx") as z:
-    root1 = etree.fromstring(z.read("Contents/section0.xml"))
-with zipfile.ZipFile("part2.hwpx") as z:
-    root2 = etree.fromstring(z.read("Contents/section0.xml"))
-
-# 2. Part 2 첫 문단(secPr) 건너뛰기
-paras2 = list(root2)
-skip = 0
-for p in paras2:
-    if p.find(f'.//{{{HP}}}secPr') is not None or p.find(f'.//{{{HP}}}ctrl') is not None:
-        skip += 1
-    else:
-        break
-
-# 3. ID 오프셋 (충돌 방지)
-def get_max_id(root):
-    mx = 0
-    for elem in root.iter():
-        v = elem.get("id")
-        if v and v.isdigit():
-            mx = max(mx, int(v))
-    return mx
-
-max_id1 = get_max_id(root1)
-offset = max_id1 + 1000
-
-def offset_ids(elem, off):
-    v = elem.get("id")
-    if v and v.isdigit():
-        elem.set("id", str(int(v) + off))
-    for ch in elem:
-        offset_ids(ch, off)
-
-# 4. 페이지 넘김 문단 삽입
-pb = etree.SubElement(root1, f"{{{HP}}}p")
-pb.set("id", str(max_id1 + 500))
-pb.set("paraPrIDRef", "0"); pb.set("styleIDRef", "0")
-pb.set("pageBreak", "1"); pb.set("columnBreak", "0"); pb.set("merged", "0")
-run = etree.SubElement(pb, f"{{{HP}}}run")
-run.set("charPrIDRef", "0")
-etree.SubElement(run, f"{{{HP}}}t")
-
-# 5. Part 2 문단 추가
-for p in paras2[skip:]:
-    pc = deepcopy(p)
-    offset_ids(pc, offset)
-    root1.append(pc)
-
-# 6. 직렬화 + HWPX 조립
-merged_xml = '<?xml version="1.0" encoding="UTF-8"?>\n' + etree.tostring(root1, encoding="unicode")
-
-with zipfile.ZipFile("part1.hwpx", "r") as z1, zipfile.ZipFile("part2.hwpx", "r") as z2:
-    with zipfile.ZipFile("merged.hwpx", "w", zipfile.ZIP_DEFLATED) as zout:
-        p1_names = set(z1.namelist())
-        for item in z1.infolist():
-            if item.filename == "Contents/section0.xml":
-                zout.writestr(item, merged_xml.encode("utf-8"))
-            elif item.filename == "mimetype":
-                zout.writestr(item, z1.read(item.filename), compress_type=zipfile.ZIP_STORED)
-            else:
-                zout.writestr(item, z1.read(item.filename))
-        for item in z2.infolist():
-            if item.filename.startswith("BinData/") and item.filename not in p1_names:
-                zout.writestr(item, z2.read(item.filename))
-
-# 7. content.hpf에 Part 2 이미지 등록
-update_content_hpf("merged.hwpx", [{"file": "img.png", "id": "img", "src_path": ""}])
-
-# 8. 후처리
-subprocess.run([sys.executable, str(SKILL_DIR/"scripts/fix_namespaces.py"), "merged.hwpx"], check=True)
+# 1. Part 2 첫 문단(secPr/ctrl) 건너뛰기
+# 2. Part 2 문단 ID 오프셋 (충돌 방지)
+# 3. 페이지 넘김 문단 삽입 후 Part 2 문단 추가
+# 4. Part 1 기반으로 ZIP 조립 (section0.xml만 교체)
 ```
 
-### 주의사항
+### 케이스 B: 다른 템플릿/스타일의 파일 병합 (★ 복잡)
 
-- **정규식으로 XML 문단을 추출하지 말 것** — 표 내부의 `</hp:p>`와 매칭되어 태그 불일치 발생
-- **반드시 lxml 파서** 사용: `etree.fromstring()` → `deepcopy()` → `root.append()`
-- **Part 2의 첫 문단 건너뛰기** — secPr/ctrl이 포함되어 있어 병합 시 페이지 설정 충돌
-- **3개 이상 병합** 시 offset을 누적: Part 3의 offset = Part 2까지의 max_id + 1000
+header.xml의 charPr/paraPr/borderFill/fontRef ID가 다르므로, 한쪽 스타일을 다른 쪽 header에 추가하고 리맵해야 한다.
+
+#### 전체 절차
+
+```
+[1] 양쪽 header.xml + section0.xml 파싱
+[2] 추가할 파일(FILE1)의 charPr/paraPr을 기반 파일(FILE2)의 header에 새 ID로 추가
+    - charPr: borderFillIDRef="1" (테두리 없음으로 고정, 박스 방지)
+    - paraPr: border borderFillIDRef="1"
+    - fontRef: 폰트 이름 기반으로 ID 리맵 (중요!)
+[3] 표 전용 깨끗한 borderFill 생성 (SOLID 테두리, 배경 없음)
+[4] FILE1 section의 charPrIDRef/paraPrIDRef/표 borderFillIDRef를 새 ID로 리맵
+[5] FILE1 section의 이미지 참조명을 접두어로 변경 (충돌 방지)
+[6] 기반 파일(FILE2)의 secPr 문단에서 제목 텍스트 run 제거
+    ⚠️ secPr 문단 안에 제목 텍스트가 포함된 경우 있음 (한글 특성)
+[7] FILE2의 모든 styleIDRef → "0" (바탕글 통일, 스타일 기반 재정렬 방지)
+[8] section 병합: secPr 직후에 FILE1 내용 → 페이지넘김 → FILE2 내용
+[9] ZIP 조립: FILE2를 완전한 기반으로 사용 (header/settings/META-INF 모두)
+[10] content.hpf 업데이트 + fix_namespaces + validate
+```
+
+#### 핵심 코드 패턴
+
+```python
+HH = "http://www.hancom.co.kr/hwpml/2011/head"
+
+# 폰트 이름 기반 ID 매핑 구축
+font_id_map = {}  # (lang, old_id) → new_id
+for ff2 in header2.iter(f"{{{HH}}}fontface"):
+    lang = ff2.get("lang")
+    name_to_id = {f.get("face"): f.get("id") for f in ff2.iter(f"{{{HH}}}font")}
+    for ff1 in header1.iter(f"{{{HH}}}fontface"):
+        if ff1.get("lang") == lang:
+            for f in ff1.iter(f"{{{HH}}}font"):
+                if f.get("face") in name_to_id:
+                    font_id_map[(lang, f.get("id"))] = name_to_id[f.get("face")]
+
+# charPr 복사 시 fontRef 리맵
+lang_to_attr = {"HANGUL":"hangul", "LATIN":"latin", "HANJA":"hanja",
+                "JAPANESE":"japanese", "OTHER":"other", "SYMBOL":"symbol", "USER":"user"}
+fr = new_charpr.find(f"{{{HH}}}fontRef")
+if fr is not None:
+    for lang, attr in lang_to_attr.items():
+        old_fid = fr.get(attr)
+        if old_fid and (lang, old_fid) in font_id_map:
+            fr.set(attr, font_id_map[(lang, old_fid)])
+
+# secPr 문단에서 제목 텍스트 run 제거
+first_para = list(root2)[0]
+for run in list(first_para.iter(f"{{{HP}}}run")):
+    t = run.find(f"{{{HP}}}t")
+    if t is not None and t.text and t.text.strip():
+        first_para.remove(run)
+
+# 표 전용 깨끗한 borderFill 생성
+clean_bf = etree.fromstring(f'''<hh:borderFill xmlns:hh="{HH}" id="{new_id}" ...>
+    <hh:leftBorder type="SOLID" width="0.12 mm" color="#000000"/>
+    ...
+    <hh:diagonal type="NONE" .../>
+</hh:borderFill>''')
+
+# 표 셀(tc/tbl)만 borderFill 리맵, 나머지는 건드리지 않음
+tag = elem.tag.split("}")[-1]
+if tag in ("tc", "tbl"):
+    bf = elem.get("borderFillIDRef")
+    if bf and int(bf) in borderFill_map:
+        elem.set("borderFillIDRef", str(borderFill_map[int(bf)]))
+```
+
+> 실제 구현 예시: `merge_final.py` 참조
+
+### 주의사항 (공통)
+
+- **반드시 lxml 파서 사용** — 정규식 불가 (표 내부 `</hp:p>` 매칭 문제)
+- **secPr 문단에 제목 텍스트가 포함될 수 있음** — run을 확인하고 텍스트 있는 run 제거
+- **styleIDRef → "0" 통일 필수** — 한글이 스타일 기반으로 내용을 재정렬할 수 있음
+- **charPr의 borderFillIDRef="1"** — 다른 값이면 글자마다 박스 생김
+- **fontRef 리맵 필수** — 같은 폰트라도 header마다 ID가 다름 (함초롬돋움이 0일 수도 10일 수도)
+- **표 borderFill은 직접 생성** — 다른 header의 borderFill 복사하면 배경색/테두리가 의도와 다를 수 있음
+- **이미지 파일명 충돌 방지** — 접두어(plan_, dept_ 등)로 BinData 파일명 변경 + section 참조도 변경
+- **ZIP 기반 파일 선택** — header가 큰(스타일 많은) 파일을 기반으로 사용. 메타파일(settings.xml, META-INF)도 같은 파일에서 가져와야 호환
 
 ---
 
@@ -773,7 +769,11 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 19. **표 열 너비는 내용 비례 배분**: md2hwpx.py의 `add_table()`이 열별 최대 텍스트 길이(한글=2, ASCII=1)에 비례하여 열 너비를 자동 배분. 최소 열 너비 2800 HWPUNIT (~10mm)
 20. **이미지는 ZIP 추가 + section0.xml 인라인 삽입 2단계**: `add_images_to_hwpx()`로 BinData에 파일만 추가하면 안 보임. 반드시 `make_image_para()`로 `<hp:pic>` XML을 생성하여 section0.xml에 삽입해야 함
 21. **HWPX 병합 시 lxml 필수**: 정규식으로 `<hp:p>...</hp:p>`를 추출하면 표 내부의 `</hp:p>`와 매칭되어 태그 불일치 발생. 반드시 `etree.fromstring()` → `deepcopy()` → `root.append()`로 문단 단위 복사
-22. **병합 시 첫 문단 건너뛰기**: Part 2+의 첫 문단에는 secPr/ctrl이 포함되어 있으므로 건너뛴다. Part 1의 페이지 설정만 유지
+22. **병합 시 secPr 문단 처리**: secPr 문단 안에 제목 텍스트 run이 포함될 수 있음. 텍스트가 있는 run을 제거해야 의도치 않은 제목 표시 방지
+23. **다른 템플릿 병합 시 5가지 리맵 필수**: (1) charPr ID (2) paraPr ID (3) fontRef ID (폰트 이름 기반) (4) 표 borderFillIDRef (깨끗한 borderFill 직접 생성) (5) 이미지 파일명 접두어
+24. **charPr borderFillIDRef="1" 고정**: 다른 값이면 글자마다 박스 표시됨
+25. **styleIDRef="0" 통일**: 다른 파일 병합 시 모든 문단의 styleIDRef를 "0"으로 변경 (스타일 기반 재정렬 방지)
+26. **ZIP 기반 파일 선택**: header가 큰(스타일 많은) 파일을 기반으로 사용. settings.xml/META-INF도 같은 파일에서 가져와야 호환
 
 ---
 
