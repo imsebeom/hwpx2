@@ -31,6 +31,7 @@ import sys
 import tempfile
 from pathlib import Path
 from xml.sax.saxutils import escape as xml_escape
+from hwpx_helpers import NS_DECL
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 SKILL_DIR = SCRIPT_DIR.parent
@@ -340,26 +341,9 @@ class SectionBuilder:
 
     def build_xml(self) -> str:
         """완성된 section0.xml 문자열 반환."""
-        ns_decl = (
-            'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '
-            'xmlns:hp="http://www.hancom.co.kr/hwpml/2011/paragraph" '
-            'xmlns:hp10="http://www.hancom.co.kr/hwpml/2016/paragraph" '
-            'xmlns:hs="http://www.hancom.co.kr/hwpml/2011/section" '
-            'xmlns:hc="http://www.hancom.co.kr/hwpml/2011/core" '
-            'xmlns:hh="http://www.hancom.co.kr/hwpml/2011/head" '
-            'xmlns:hhs="http://www.hancom.co.kr/hwpml/2011/history" '
-            'xmlns:hm="http://www.hancom.co.kr/hwpml/2011/master-page" '
-            'xmlns:hpf="http://www.hancom.co.kr/schema/2011/hpf" '
-            'xmlns:dc="http://purl.org/dc/elements/1.1/" '
-            'xmlns:opf="http://www.idpf.org/2007/opf/" '
-            'xmlns:ooxmlchart="http://www.hancom.co.kr/hwpml/2016/ooxmlchart" '
-            'xmlns:hwpunitchar="http://www.hancom.co.kr/hwpml/2016/HwpUnitChar" '
-            'xmlns:epub="http://www.idpf.org/2007/ops" '
-            'xmlns:config="urn:oasis:names:tc:opendocument:xmlns:config:1.0"'
-        )
         body = "\n".join(self.paragraphs)
         return f'''<?xml version='1.0' encoding='UTF-8'?>
-<hs:sec {ns_decl}>
+<hs:sec {NS_DECL}>
 {body}
 </hs:sec>'''
 
@@ -457,14 +441,8 @@ def md_to_section(md_text: str, template: str = "report") -> tuple[str, str]:
                 builder.add_empty_line()
                 builder.add_paragraph(heading_text, "h2")
                 builder.add_empty_line()
-            elif level == 3:
-                builder.add_paragraph(heading_text, "h3")
-            elif level == 4:
-                builder.add_paragraph(heading_text, "h4")
-            elif level == 5:
-                builder.add_paragraph(heading_text, "h5")
-            elif level == 6:
-                builder.add_paragraph(heading_text, "h6")
+            else:  # 3-6
+                builder.add_paragraph(heading_text, f"h{level}")
             i += 1
             continue
 
