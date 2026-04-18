@@ -57,6 +57,7 @@ ${CLAUDE_SKILL_DIR}/
 | 새 기능 | 파일 | 용도 |
 |--------|------|------|
 | 표 계산식 엔진 | `scripts/table_calc.py` | SUM/AVG/MIN/MAX/COUNT/IF + 범위·방향 참조. 표 셀 수식 평가 |
+| **HWPX FORMULA 필드 주입** | `hwpx_helpers.py` — `apply_formula_to_cell()`, `build_formula_run_inner_xml()` | HwpOffice 실스펙 구조로 필드 삽입. F9로 재계산 가능 (2026-04-19 검증) |
 | `local_name()` / `xpath_local()` | `hwpx_helpers.py` | 네임스페이스 prefix 무관 XPath 검색 |
 | `utf16_len()` / `tab_aware_offset()` | `hwpx_helpers.py` | 탭 8 코드유닛 동기화 (charShape 경계 계산용) |
 | zip bomb 상한 체크 | `verify_hwpx.py`, `hwpx_helpers.py` | XML 32MB / BinData 64MB |

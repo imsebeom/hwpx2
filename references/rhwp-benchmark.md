@@ -190,6 +190,70 @@ with HwpxModifier("form.hwpx") as m:
 2. **일괄 치환**: `Command == "USERNAME"` 인 필드 전부 찾아 사용자명 삽입
 3. **검증**: `verify_hwpx.py`에서 원본 vs 결과 필드 수 비교
 
+## HWPX FORMULA 필드 실스펙 (2026-04-19 검증)
+
+table_calc 엔진의 **최종 목표 시나리오**는 HWPX 표 셀에 FORMULA 필드를 **실제로 주입**하여
+HwpOffice에서 필드 업데이트(F9)로 재계산 가능하게 만드는 것. HwpOffice가 직접 저장한
+파일을 역공학하여 정확한 스펙을 확보하고, `hwpx_helpers.py`에 공식 헬퍼를 등록했다.
+
+### 실제 XML 구조
+
+```xml
+<hp:run charPrIDRef="...">
+  <hp:ctrl>                                     ← 필수 래퍼
+    <hp:fieldBegin id="..." type="FORMULA" name=""
+                   editable="0" dirty="0" zorder="-1"
+                   fieldid="627469685" metaTag="">
+      <hp:parameters cnt="5" name="">
+        <hp:integerParam name="Prop">8</hp:integerParam>
+        <hp:stringParam name="Command">=SUM(B?:E?)??%g,;;5,710</hp:stringParam>
+        <hp:stringParam name="Formula">=SUM(B?:E?)</hp:stringParam>
+        <hp:stringParam name="ResultFormat">%g,</hp:stringParam>
+        <hp:stringParam name="LastResult">5,710</hp:stringParam>
+      </hp:parameters>
+    </hp:fieldBegin>
+  </hp:ctrl>
+  <hp:t>5,710</hp:t>
+  <hp:ctrl><hp:fieldEnd beginIDRef="..." fieldid="..."/></hp:ctrl>
+  <hp:t/>
+</hp:run>
+```
+
+### 요점
+
+- **`<hp:ctrl>` 래퍼 필수** — fieldBegin/End가 run의 직접 자식이 아니라 ctrl 자식
+- **5-파라미터 고정**: Prop(=8, integer) / Command / Formula / ResultFormat / LastResult
+- **Command 패킹**: `"<formula>??<format>;;<result>"` — 레거시 문자열 형식
+- **fieldEnd 속성**: `beginIDRef` + `fieldid` (fieldType 아님)
+- **와일드카드 `?`**: `=SUM(B?:E?)` — `?`=현재 행 / `=SUM(?2:?4)` — `?`=현재 열
+- **모든 FORMULA 필드가 공통 `fieldid` 공유** (그룹 ID, 기본 `627469685`)
+
+### 스킬 헬퍼
+
+`hwpx_helpers.py`:
+
+```python
+from hwpx_helpers import apply_formula_to_cell
+# tc = lxml <hp:tc> 엘리먼트
+apply_formula_to_cell(tc, field_id=2139727780, formula="=SUM(B?:E?)", result_str="5,710")
+```
+
+### 지원 확인된 함수 (HwpOffice 렌더 검증)
+
+SUM · AVERAGE · MAX · MIN — 2026-04-18 학급 독서 통계표 테스트에서
+34개 셀 전부 정상 렌더·재계산 확인.
+
+### 활용 시나리오 구분
+
+| 시나리오 | 방법 | HWPX에 수식 보존 | 예시 |
+|----------|------|------------------|------|
+| **A안** — Python 선계산 후 결과만 표에 | `<hp:t>` 텍스트 직접 치환 | ❌ | 학교사업계획서, 학급평가보고서 (이번 세션 초기 생성물) |
+| **B안** — FORMULA 필드 주입 (이 문서) | `apply_formula_to_cell()` | ✅ (재계산 가능) | 학급독서통계 (2026-04-18), 셀수식_AB비교/B_real_formula.hwpx |
+
+A안은 고정 수치 배포용, B안은 데이터 갱신이 예상되는 양식에 적합.
+
+---
+
 ## 한계 & 향후
 
 현재 포팅하지 않았거나 추후 고려할 항목:

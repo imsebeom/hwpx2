@@ -616,4 +616,130 @@ def read_zip_entry_limited(zf, name, *, limit=None):
         raise ValueError(f"압축 해제 후 크기 초과 ({name}: {len(data)} > {limit})")
     return data
 
-    os.replace(tmp, out)
+
+# =============================================================================
+# HWPX FORMULA 필드 주입 (HwpOffice 실스펙 검증, 2026-04-19)
+# =============================================================================
+#
+# HwpOffice 가 직접 저장하는 FORMULA 필드는 다음 구조다 (한컴 실파일 역공학):
+#
+#   <hp:run charPrIDRef="...">
+#     <hp:ctrl>
+#       <hp:fieldBegin id type="FORMULA" name editable dirty zorder fieldid metaTag>
+#         <hp:parameters cnt="5" name="">
+#           <hp:integerParam name="Prop">8</hp:integerParam>
+#           <hp:stringParam name="Command">수식??포맷;;결과</hp:stringParam>
+#           <hp:stringParam name="Formula">수식</hp:stringParam>
+#           <hp:stringParam name="ResultFormat">%g,</hp:stringParam>
+#           <hp:stringParam name="LastResult">결과</hp:stringParam>
+#         </hp:parameters>
+#       </hp:fieldBegin>
+#     </hp:ctrl>
+#     <hp:t>결과</hp:t>
+#     <hp:ctrl><hp:fieldEnd beginIDRef fieldid/></hp:ctrl>
+#     <hp:t/>
+#   </hp:run>
+#
+# 핵심:
+#   - <hp:ctrl> 래퍼 필수 (run 의 직접 자식이 아님)
+#   - parameters cnt="5", Prop(integer)=8 고정
+#   - Command 문자열은 "<formula>??<format>;;<result>" 레거시 패킹
+#   - fieldEnd 속성은 beginIDRef/fieldid (fieldType 아님)
+#   - 수식은 와일드카드 `?` 사용: =SUM(B?:E?) — ?=현재 행, =SUM(?2:?4) — ?=현재 열
+#   - HwpOffice F9 (필드 업데이트) 로 재계산 가능
+#
+# 검증: HwpOffice에서 SUM/AVERAGE/MAX/MIN 정상 렌더·재계산 확인 (2026-04-18).
+
+
+FORMULA_DEFAULT_FIELDID = 627469685   # 문서 내 FORMULA 필드 그룹 ID (HwpOffice 기본값)
+FORMULA_DEFAULT_FORMAT = "%g,"        # 결과 포맷 (천 단위 콤마)
+
+
+def build_formula_run_inner_xml(field_id, formula, result_str, *,
+                                 fieldid=FORMULA_DEFAULT_FIELDID,
+                                 result_format=FORMULA_DEFAULT_FORMAT):
+    """FORMULA 필드 한 셀에 들어갈 <hp:run> 내부 XML 문자열을 생성한다.
+
+    이 문자열을 기존 run 의 자식으로 이식하면 HwpOffice 호환 FORMULA 필드가 된다.
+
+    Args:
+        field_id: 필드별 유니크 ID (정수). 보통 `2139727780 + 순번` 사용.
+        formula: 수식 문자열 (예: ``"=SUM(B?:E?)"``). 와일드카드 `?` 지원.
+        result_str: 프리컴퓨트된 결과 문자열 (예: ``"5,710"``).
+        fieldid: 문서 내 FORMULA 필드 그룹 ID (모든 필드가 공유).
+        result_format: HwpOffice 결과 포맷 문자열 (기본 ``"%g,"``).
+
+    Returns:
+        run 내부에 넣을 XML 문자열 (ctrl + fieldBegin + t + ctrl + fieldEnd + t).
+    """
+    command = f"{formula}??{result_format};;{result_str}"
+    return (
+        '<hp:ctrl>'
+        f'<hp:fieldBegin id="{field_id}" type="FORMULA" name="" '
+        f'editable="0" dirty="0" zorder="-1" fieldid="{fieldid}" metaTag="">'
+        '<hp:parameters cnt="5" name="">'
+        '<hp:integerParam name="Prop">8</hp:integerParam>'
+        f'<hp:stringParam name="Command">{command}</hp:stringParam>'
+        f'<hp:stringParam name="Formula">{formula}</hp:stringParam>'
+        f'<hp:stringParam name="ResultFormat">{result_format}</hp:stringParam>'
+        f'<hp:stringParam name="LastResult">{result_str}</hp:stringParam>'
+        '</hp:parameters>'
+        '</hp:fieldBegin>'
+        '</hp:ctrl>'
+        f'<hp:t>{result_str}</hp:t>'
+        '<hp:ctrl>'
+        f'<hp:fieldEnd beginIDRef="{field_id}" fieldid="{fieldid}"/>'
+        '</hp:ctrl>'
+        '<hp:t/>'
+    )
+
+
+def apply_formula_to_cell(tc, field_id, formula, result_str, *,
+                           fieldid=FORMULA_DEFAULT_FIELDID,
+                           result_format=FORMULA_DEFAULT_FORMAT):
+    """lxml ``<hp:tc>`` 셀에 FORMULA 필드를 주입한다.
+
+    셀의 첫 run 자식들을 제거하고 새 FORMULA 필드 구조로 교체한다.
+    셀에 ``dirty="1"`` 속성도 설정한다 (HwpOffice가 수식 셀로 인식).
+
+    Args:
+        tc: lxml `<hp:tc>` 엘리먼트 (네임스페이스 무관).
+        field_id: 유니크 필드 ID.
+        formula: 수식 문자열 (와일드카드 ``?`` 지원).
+        result_str: 프리컴퓨트된 결과 문자열.
+        fieldid: 필드 그룹 ID (문서 공통).
+        result_format: 결과 포맷.
+
+    Returns:
+        bool — 성공하면 True. 셀에 <hp:run> 이 없으면 False.
+
+    Example::
+
+        from lxml import etree
+        from hwpx_helpers import apply_formula_to_cell
+        # tc = 어떤 <hp:tc> 엘리먼트
+        apply_formula_to_cell(tc, 2139727780, "=SUM(B?:E?)", "5,710")
+    """
+    from lxml import etree as _et  # 지연 임포트 (lxml 미설치 환경 고려)
+
+    HP_NS = "http://www.hancom.co.kr/hwpml/2011/paragraph"
+    HP_RUN = f"{{{HP_NS}}}run"
+
+    tc.set("dirty", "1")
+    run = next(iter(tc.iter(HP_RUN)), None)
+    if run is None:
+        return False
+    charPr = run.get("charPrIDRef", "0")
+    for child in list(run):
+        run.remove(child)
+
+    inner = build_formula_run_inner_xml(
+        field_id, formula, result_str,
+        fieldid=fieldid, result_format=result_format,
+    )
+    new_run = _et.fromstring(
+        f'<hp:run xmlns:hp="{HP_NS}" charPrIDRef="{charPr}">{inner}</hp:run>'
+    )
+    for child in new_run:
+        run.append(child)
+    return True
