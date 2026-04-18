@@ -2,9 +2,21 @@
 
 HWPX(한컴오피스 한글 개방형 문서) 생성, 편집, 병합을 위한 Claude Code 커스텀 스킬.
 
-## 기반
+## 참조 및 크레딧
 
-이 스킬은 [jkf87/hwpx-skill](https://github.com/jkf87/hwpx-skill)을 기반으로 하며, 추가 기능과 버그 수정을 포함합니다.
+이 스킬은 다음 오픈소스 프로젝트·문서·라이브러리를 참조·활용하여 만들어졌습니다.
+각 프로젝트 저자와 기여에 감사드립니다.
+
+| 구분 | 프로젝트 / 자료 | 라이선스 | 기여 / 참조 범위 |
+|------|-----------------|----------|------------------|
+| 기반 fork | [jkf87/hwpx-skill](https://github.com/jkf87/hwpx-skill) | 원본 라이선스 | 최초 기반. ZIP-level 치환 워크플로우, 템플릿 구조, 기본 빌드 패턴 |
+| 알고리즘 포팅 | [edwardkim/rhwp](https://github.com/edwardkim/rhwp) | MIT (© 2025-2026 Edward Kim) | 표 계산식 엔진, 네임스페이스 헬퍼, UTF-16 오프셋, zip bomb 방어, 필드 API 포팅 (2026-04-18) |
+| 스펙 자료 | 한글과컴퓨터 HWP 파일 형식 공개 문서 | 공개 | HWPX XML 스키마 해석 기준 |
+| Python 라이브러리 | `lxml` / `python-hwpx` / `Pillow` | 각 라이브러리 라이선스 | XML 파싱·편집, HWPX 읽기, 이미지 처리 |
+
+**상세 참조**: 원본 fork 대비 변경 사항은 아래 "원본(jkf87) 대비 변경 사항" 참조.
+rhwp 포팅 상세는 [`references/rhwp-benchmark.md`](references/rhwp-benchmark.md),
+제3자 라이선스 전문은 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 참조.
 
 ## 원본(jkf87) 대비 변경 사항
 
