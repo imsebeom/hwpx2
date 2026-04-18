@@ -67,6 +67,23 @@ pip install lxml Pillow
 | H | 표 조작 (셀 채우기, 행 추가) | hwpx_form_filler.py |
 | I | 여러 HWPX 병합 | lxml 기반 문단 복사 |
 
+## rhwp 포팅 (2026-04-18)
+
+Rust + WebAssembly HWPX 역공학 프로젝트 [edwardkim/rhwp](https://github.com/edwardkim/rhwp)
+(MIT License) 의 알고리즘·패턴을 **외부 의존성 없이** Python으로 이식하여 스킬을 확장했습니다.
+
+| 추가/보강 | 참조한 rhwp 모듈 |
+|-----------|------------------|
+| `scripts/table_calc.py` (표 계산식 엔진, SUM/AVG/IF + 범위/방향 참조) | `src/document_core/table_calc/` |
+| `hwpx_helpers.py` — `local_name()`, `xpath_local()` (네임스페이스 무관 XPath) | `src/parser/hwpx/utils.rs` |
+| `hwpx_helpers.py` — `utf16_len()`, `tab_aware_offset()` | `src/parser/hwpx/section.rs` |
+| `verify_hwpx.py` — zip bomb 상한 (XML 32MB / BinData 64MB) | `src/parser/hwpx/reader.rs` |
+| `hwpx_modifier.py` — `collect_all_fields()` | `src/document_core/queries/field_query.rs` |
+
+배경·API·한계는 `references/rhwp-benchmark.md`, 라이선스 고지는 `THIRD_PARTY_NOTICES.md` 참조.
+
 ## 라이선스
 
 원본 [jkf87/hwpx-skill](https://github.com/jkf87/hwpx-skill)의 라이선스를 따릅니다.
+
+제3자 코드의 라이선스 고지는 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md)를 참조하세요.
