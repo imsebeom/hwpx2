@@ -472,4 +472,148 @@ def insert_image_at(hwpx_path, img_path, anchor_text, width_mm=120,
                     zout.writestr(item, zin.read(item.filename))
             zout.write(img_path, f"BinData/{fname}")
 
+
+# =============================================================================
+# rhwp 기반 헬퍼 (edwardkim/rhwp, MIT License 참조)
+# =============================================================================
+
+def local_name(tag):
+    """lxml 태그에서 네임스페이스 접두사를 제거한 로컬 이름을 반환한다.
+
+    rhwp `src/parser/hwpx/utils.rs:10-18` 패턴 차용.
+    HWPX XML은 ``hp:``, ``hc:``, ``hs:`` 등 다양한 prefix가 혼재하므로
+    ``elem.tag == "{uri}p"`` 비교 대신 ``local_name(elem.tag) == "p"`` 를 쓰면 견고하다.
+
+    Args:
+        tag: lxml `_Element.tag` 문자열. ``"{http://...}p"`` 또는 ``"hp:p"`` 또는 ``"p"``.
+
+    Returns:
+        로컬 이름 (예: ``"p"``).
+    """
+    if not isinstance(tag, str):
+        return ""
+    if tag.startswith("{"):
+        # Clark notation: {uri}localname
+        end = tag.find("}")
+        return tag[end + 1:] if end >= 0 else tag
+    if ":" in tag:
+        return tag.split(":", 1)[1]
+    return tag
+
+
+def xpath_local(root, local_name_pattern):
+    """로컬 이름 기반 XPath 검색. 네임스페이스 접두사 무관.
+
+    Args:
+        root: lxml `_Element` 루트.
+        local_name_pattern: 로컬 이름 (예: ``"p"``) 또는 계층(예: ``"tbl/tr/tc"``).
+
+    Returns:
+        매칭된 `_Element` 리스트.
+
+    예시::
+
+        for p in xpath_local(root, "p"):          # 모든 <hp:p>
+            ...
+        for t in xpath_local(root, "tbl//t"):     # <hp:tbl> 하위의 모든 <hp:t>
+            ...
+    """
+    parts = [p for p in local_name_pattern.split("/") if p != ""]
+    axis = "descendant::"
+    query_parts = []
+    for part in parts:
+        if part == "":  # "//" (빈 파트) — descendant axis
+            axis = "descendant-or-self::"
+            continue
+        query_parts.append(f"{axis}*[local-name()='{part}']")
+        axis = "descendant-or-self::"
+    return root.xpath("/".join(query_parts))
+
+
+def utf16_len(s):
+    """UTF-16 코드 유닛 길이.
+
+    HWP 바이너리 포맷은 char_offset을 UTF-16 코드 유닛 단위로 계산한다.
+    대부분의 한글·ASCII는 1 코드 유닛이지만, 이모지·일부 한자(surrogate pair)는
+    2 코드 유닛이다. Python `len(s)`는 코드포인트 기준이라 어긋날 수 있다.
+
+    rhwp `src/parser/hwpx/section.rs:299-322` 참조.
+
+    Args:
+        s: 문자열.
+
+    Returns:
+        UTF-16 코드 유닛 수.
+
+    예시::
+
+        utf16_len("가")      # 1  (BMP)
+        utf16_len("a")       # 1
+        utf16_len("\U0001F600")  # 2  (U+1F600, surrogate pair)
+    """
+    return len(s.encode("utf-16-le")) // 2
+
+
+def tab_aware_offset(s, tab_width=8):
+    """탭 문자를 N 코드 유닛으로 확장한 UTF-16 오프셋.
+
+    HWP 바이너리에서 탭 컨트롤 문자(0x0009)는 8 UTF-16 코드 유닛으로 계산된다.
+    문자열에 탭이 포함된 문단의 char_shape 경계를 계산할 때 필요하다.
+
+    rhwp `src/parser/hwpx/section.rs:310-322` 참조.
+
+    Args:
+        s: 문자열.
+        tab_width: 탭당 코드 유닛 수 (기본 8).
+
+    Returns:
+        탭 확장 후 UTF-16 오프셋.
+    """
+    if "\t" not in s:
+        return utf16_len(s)
+    total = 0
+    for ch in s:
+        if ch == "\t":
+            total += tab_width
+        elif ord(ch) > 0xFFFF:
+            total += 2  # surrogate pair
+        else:
+            total += 1
+    return total
+
+
+# zip bomb 방어 상한 (rhwp src/parser/hwpx/reader.rs:19-26)
+HWPX_MAX_XML_SIZE = 32 * 1024 * 1024       # 32 MB — content.hpf, section*.xml, header.xml 등
+HWPX_MAX_BINDATA_SIZE = 64 * 1024 * 1024   # 64 MB — BinData/*.png, .jpg 등
+
+
+def read_zip_entry_limited(zf, name, *, limit=None):
+    """zip bomb 방어 상한을 적용한 zip 엔트리 읽기.
+
+    압축 해제된 크기가 ``limit`` 을 초과하면 예외 발생. 기본 상한은 파일 경로에서
+    추론: BinData/* 는 64MB, 나머지는 32MB.
+
+    Args:
+        zf: ``zipfile.ZipFile`` 객체.
+        name: 엔트리 이름.
+        limit: 사용자 지정 상한 (bytes). None이면 자동 결정.
+
+    Raises:
+        ValueError: 상한 초과.
+
+    Returns:
+        bytes.
+    """
+    info = zf.getinfo(name)
+    if limit is None:
+        limit = HWPX_MAX_BINDATA_SIZE if name.startswith("BinData/") else HWPX_MAX_XML_SIZE
+    if info.file_size > limit:
+        raise ValueError(
+            f"zip 엔트리 크기 초과 ({name}: {info.file_size} > {limit}). zip bomb 가능성."
+        )
+    data = zf.read(name)
+    if len(data) > limit:  # ZipInfo.file_size가 거짓일 수 있어 실제 크기로도 검증
+        raise ValueError(f"압축 해제 후 크기 초과 ({name}: {len(data)} > {limit})")
+    return data
+
     os.replace(tmp, out)

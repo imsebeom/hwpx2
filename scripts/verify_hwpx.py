@@ -25,6 +25,27 @@ import re
 import sys
 import zipfile
 
+# rhwp (edwardkim/rhwp, src/parser/hwpx/reader.rs:19-26) 기반 zip bomb 상한
+ZIP_MAX_XML_SIZE = 32 * 1024 * 1024       # 32 MB — XML/HPF 엔트리
+ZIP_MAX_BINDATA_SIZE = 64 * 1024 * 1024   # 64 MB — BinData/* 이미지/폰트
+
+
+def _check_zip_bomb(zf, names):
+    """zip bomb 방어: 엔트리별 해제 크기 상한 검증.
+
+    위반 목록(빈 리스트 = 안전)을 반환한다.
+    """
+    violations = []
+    for name in names:
+        try:
+            info = zf.getinfo(name)
+        except KeyError:
+            continue
+        limit = ZIP_MAX_BINDATA_SIZE if name.startswith("BinData/") else ZIP_MAX_XML_SIZE
+        if info.file_size > limit:
+            violations.append({"entry": name, "size": info.file_size, "limit": limit})
+    return violations
+
 
 def _count_structure(hwpx_path):
     """HWPX 구조 요소를 카운트한다."""
@@ -34,6 +55,12 @@ def _count_structure(hwpx_path):
         names = zf.namelist()
         result["zip_entries"] = len(names)
         result["bindata"] = len([n for n in names if n.startswith("BinData/")])
+
+        # zip bomb 상한 체크 (rhwp 기반)
+        zb = _check_zip_bomb(zf, names)
+        result["zip_bomb_safe"] = not zb
+        if zb:
+            result["zip_bomb_violations"] = zb
 
         # mimetype 검사
         result["mimetype_first"] = names[0] == "mimetype" if names else False
@@ -136,6 +163,11 @@ def verify(source_path=None, result_path=None, json_output=None):
         report["issues"].append(
             f"XML 파싱 실패 {result_info['xml_invalid']}개: "
             + "; ".join(result_info.get("xml_errors", []))
+        )
+    # zip bomb 상한 위반
+    for v in result_info.get("zip_bomb_violations", []):
+        report["issues"].append(
+            f"엔트리 크기 상한 초과 ({v['entry']}: {v['size']} > {v['limit']}) — zip bomb 가능성"
         )
 
     # 2. 원본과 비교 (제공된 경우)

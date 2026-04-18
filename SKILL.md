@@ -14,18 +14,20 @@ HWPX는 한컴오피스 한글의 개방형 문서 포맷이다. **ZIP 패키지
 ${CLAUDE_SKILL_DIR}/
 ├── SKILL.md
 ├── scripts/
-│   ├── hwpx_helpers.py        # ★ 헬퍼 라이브러리 (배너/섹션바/이미지/빌드 함수)
+│   ├── hwpx_helpers.py        # ★ 헬퍼 라이브러리 (+ local_name/utf16/zip 상한)
+│   ├── table_calc.py          # ★ 표 계산식 엔진 (SUM/AVG/IF 등, rhwp 포팅)
 │   ├── build_hwpx.py          # 템플릿+XML → .hwpx 조립
 │   ├── fix_namespaces.py      # ★ 필수: 네임스페이스 후처리
 │   ├── validate.py            # HWPX 구조 검증
-│   ├── analyze_template.py    # HWPX 심층 분석
+│   ├── analyze_template.py    # HWPX 심층 분석 (xpath_local 사용)
 │   ├── clone_form.py           # ★ 양식 복제 (Workflow F)
-│   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구
+│   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구 (+ zip bomb 체크)
 │   ├── text_extract.py        # 텍스트 추출
 │   ├── md2hwpx.py             # 마크다운→HWPX 자동 변환
-│   ├── hwpx_modifier.py       # ★ 양식 세밀 수정 (Workflow G)
+│   ├── hwpx_modifier.py       # ★ 양식 세밀 수정 (+ collect_all_fields)
 │   ├── hwpx_form_filler.py    # ★ 양식 부분 추출/표 조작 (Workflow H)
 │   ├── hwpx_writer.py         # 줄간격 XML 생성 유틸리티
+│   ├── exam_builder.py          # ★ 시험 문제지 생성 (Workflow J)
 │   └── office/{unpack,pack}.py
 ├── templates/
 │   ├── base/                  # 베이스 Skeleton
@@ -43,8 +45,22 @@ ${CLAUDE_SKILL_DIR}/
     ├── troubleshooting.md     # 트러블슈팅
     ├── report-style.md        # 보고서 양식 상세
     ├── official-doc-style.md  # 공문서 양식 상세
-    └── xml-internals.md       # 저수준 XML 구조
+    ├── xml-internals.md       # 저수준 XML 구조
+    └── rhwp-benchmark.md      # rhwp 포팅 배경·표 수식·필드 API 사용법
 ```
+
+## rhwp 포팅 요약 (2026-04-18)
+
+외부 의존성 없이 rhwp (edwardkim/rhwp, MIT) 에서 **알고리즘·패턴**만 추출·포팅.
+자세한 배경은 `references/rhwp-benchmark.md` 참조.
+
+| 새 기능 | 파일 | 용도 |
+|--------|------|------|
+| 표 계산식 엔진 | `scripts/table_calc.py` | SUM/AVG/MIN/MAX/COUNT/IF + 범위·방향 참조. 표 셀 수식 평가 |
+| `local_name()` / `xpath_local()` | `hwpx_helpers.py` | 네임스페이스 prefix 무관 XPath 검색 |
+| `utf16_len()` / `tab_aware_offset()` | `hwpx_helpers.py` | 탭 8 코드유닛 동기화 (charShape 경계 계산용) |
+| zip bomb 상한 체크 | `verify_hwpx.py`, `hwpx_helpers.py` | XML 32MB / BinData 64MB |
+| `collect_all_fields()` | `hwpx_modifier.py` | `<hp:fieldBegin>` 전수 조회 (fieldName/Command/params) |
 
 ## 환경 설정
 
@@ -68,6 +84,7 @@ pip install python-hwpx lxml --break-system-packages
  ├─ "들여쓰기 조정/정규식 치환/인덱스 수정" → 워크플로우 G (세밀 수정)
  ├─ "붙임 추출/표 행 추가/셀 채우기" → 워크플로우 H (표 조작)
  ├─ "여러 HWPX를 하나로 합쳐줘" → 워크플로우 I (병합)
+ ├─ "시험 문제지/PDF 시험지 → HWPX" → 워크플로우 J (시험 문제지)
  └─ "HWPX 읽어줘" → 워크플로우 E (읽기/추출)
 ```
 
@@ -384,6 +401,59 @@ def zip_replace(src, dst, replacements):
                 else:
                     zout.writestr(item, data)
     os.replace(tmp, dst)
+
+# ⚠️ 필수: fix_namespaces 후처리
+import subprocess, sys
+subprocess.run([sys.executable,
+    "C:/Users/hccga/.claude/skills/hwpx/scripts/fix_namespaces.py", dst], check=True)
+# 검증
+subprocess.run([sys.executable,
+    "C:/Users/hccga/.claude/skills/hwpx/scripts/validate.py", dst])
+```
+
+> **⚠️ fix_namespaces.py 누락 = 문서 안 열림!**
+> ZIP을 재패킹하면 Python의 zipfile/lxml이 XML 네임스페이스 선언을 누락/변형시킨다.
+> `fix_namespaces.py`를 실행하지 않으면 한글에서 문서가 열리지 않거나 빈 페이지로 표시된다.
+> **ZIP-level로 HWPX를 수정하는 모든 경우(워크플로우 B, C, F, 직접 수정 등)에 반드시 마지막에 실행할 것.**
+
+### BinData 이미지 교체 (ZIP-level)
+
+기존 HWPX의 삽화를 교체할 때는 **원본 BMP 크기와 동일하게** 리사이즈하여 교체한다.
+
+```python
+from PIL import Image
+import io
+
+def zip_replace_with_images(src, dst, text_replacements, image_replacements):
+    """
+    text_replacements: {"기존텍스트": "새텍스트", ...}
+    image_replacements: {"BinData/image42.BMP": "new_image.png", ...}
+    """
+    tmp = dst + ".tmp"
+    with zipfile.ZipFile(src, "r") as zin:
+        with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in zin.infolist():
+                if item.filename in image_replacements:
+                    # 원본 크기 확인 후 동일 크기 BMP로 교체
+                    orig = Image.open(io.BytesIO(zin.read(item.filename)))
+                    new_img = Image.open(image_replacements[item.filename])
+                    new_img = new_img.convert("RGB").resize(orig.size, Image.LANCZOS)
+                    buf = io.BytesIO()
+                    new_img.save(buf, "BMP")
+                    zout.writestr(item, buf.getvalue())
+                elif item.filename.startswith("Contents/") and item.filename.endswith(".xml"):
+                    text = zin.read(item.filename).decode("utf-8")
+                    for old, new in text_replacements.items():
+                        text = text.replace(old, new)
+                    zout.writestr(item, text.encode("utf-8"))
+                elif item.filename == "mimetype":
+                    zout.writestr(item, zin.read(item.filename), compress_type=zipfile.ZIP_STORED)
+                else:
+                    zout.writestr(item, zin.read(item.filename))
+    os.replace(tmp, dst)
+    # ⚠️ 필수 후처리
+    subprocess.run([sys.executable,
+        "C:/Users/hccga/.claude/skills/hwpx/scripts/fix_namespaces.py", dst], check=True)
 ```
 
 ### 양식 선택 정책
@@ -572,9 +642,21 @@ modify_hwpx_template(
 
 ```
 [1] 문서 열기 → [2] 양식 섹션 추출 (optional)
-[3] 표 구조 분석 → [4] 좌표 기반 셀 채우기 / 행 추가
-[5] 저장
+[3] 표 구조 분석 (analyze_form_table)
+[4] 플레이스홀더 템플릿 생성 → ★ STOP: 사용자 검토
+[5] 검토 완료 후 좌표 기반 셀 채우기 / 행 추가
+[6] 저장
 ```
+
+> **⚠️ 템플릿 활용 시 필수 프로토콜 (Step 4)**
+>
+> 기존 HWPX를 양식으로 사용하여 `fill_cells_directly()`로 내용을 채울 때:
+> 1. 먼저 `analyze_form_table()`로 행/열 좌표를 확인한다.
+> 2. 내용 셀에 `{{제목}}`, `{{일시}}` 등 플레이스홀더를 넣어 템플릿을 생성한다.
+> 3. **생성된 템플릿을 열어 사용자에게 보여주고, 좌표가 맞는지 검토를 받는다.**
+> 4. 사용자가 확인한 후에만 실제 내용을 채운다.
+>
+> 이미 검증된 플레이스홀더 템플릿이 있으면 Step 4를 건너뛸 수 있다.
 
 ### Python API
 
@@ -760,6 +842,113 @@ if tag in ("tc", "tbl"):
 
 ---
 
+## 워크플로우 J: 시험 문제지 생성 (★ 시험/평가 전용)
+
+> **PDF 시험지 또는 구조화된 문항 데이터를 HWPX 문제지로 변환.**
+> 엔드노트 정답, 탭 정렬 선택지, 그룹 레이블/지문 등 시험 전용 XML 패턴을 지원한다.
+
+### 전체 흐름
+
+```
+[1] PDF 읽기 → 텍스트/이미지 추출 (Read 도구 또는 text_extract.py)
+[2] Claude가 내용 분석 → JSON 구조화 (아래 스키마)
+[3] JSON 파일 저장
+[4] exam_builder.py 실행
+    → 내부에서 build_hwpx.py + fix_namespaces.py 자동 호출
+[5] validate.py 검증
+```
+
+### JSON 입력 스키마
+
+```json
+{
+  "title": "2026학년도 3월 모의고사 영어",
+  "columns": 2,
+  "style": {
+    "group_label": {"charPr": "9", "paraPr": "0"},
+    "passage":     {"charPr": "0", "paraPr": "0"},
+    "question":    {"charPr": "0", "paraPr": "0"},
+    "choice":      {"charPr": "0", "paraPr": "0"},
+    "endnote_ref": {"charPr": "0"},
+    "endnote_body":{"charPr": "0", "paraPr": "0"},
+    "empty":       {"charPr": "0", "paraPr": "0"}
+  },
+  "items": [
+    {
+      "group": "[1-2] 다음 글을 읽고 물음에 답하시오.",
+      "passage": "지문 텍스트...",
+      "questions": [
+        {
+          "num": 1,
+          "text": "윗글의 주제로 가장 적절한 것은?",
+          "choices": ["선택지1", "선택지2", "선택지3", "선택지4", "선택지5"],
+          "answer": "③"
+        }
+      ]
+    },
+    {
+      "num": 3,
+      "text": "독립 문항 텍스트",
+      "choices": ["A", "B", "C", "D", "E"],
+      "answer": "①"
+    }
+  ]
+}
+```
+
+- `style`: 선택적. 생략 시 report 템플릿 기본값 사용. `--ref`로 양식 HWPX를 주면 해당 양식의 ID 사용
+- `columns`: 1 또는 2 (기본 1). 시험지는 보통 2단
+- `items`: 그룹 문항(`group` + `questions`)과 독립 문항(`num` + `text`) 혼합 가능
+- `choices` 길이가 모두 15자 이하 → 탭 정렬 2줄 (①②③ / ④⑤), 아니면 각 1줄
+
+### CLI 사용법
+
+```bash
+# 기본 (report 템플릿)
+python3 "${CLAUDE_SKILL_DIR}/scripts/exam_builder.py" data.json -o exam.hwpx
+
+# 양식 참조 (양식의 스타일 ID + secPr/colPr + header 사용)
+python3 "${CLAUDE_SKILL_DIR}/scripts/exam_builder.py" data.json --ref form.hwpx -o exam.hwpx
+
+# 템플릿 지정
+python3 "${CLAUDE_SKILL_DIR}/scripts/exam_builder.py" data.json -t base -o exam.hwpx
+
+# 검증
+python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" exam.hwpx
+```
+
+### Python API
+
+```python
+from exam_builder import build_exam, build_section_xml
+
+# 전체 파이프라인
+build_exam("data.json", "exam.hwpx", template="report")
+
+# 양식 참조
+build_exam("data.json", "exam.hwpx", ref_hwpx="form.hwpx")
+
+# section0.xml만 생성 (커스텀 파이프라인용)
+import json
+data = json.load(open("data.json", encoding="utf-8"))
+xml = build_section_xml(data)
+```
+
+### 엔드노트 정답
+
+각 질문 문단 끝에 `<hp:endNote>`로 정답을 삽입한다. 문서 끝에 미주(endnote) 목록으로 표시됨.
+- `answer` 값이 빈 문자열이면 엔드노트는 생성되지만 내용이 비어있음
+- 엔드노트 번호는 문항 순서대로 1부터 자동 증가
+
+### 선택지 레이아웃
+
+| 조건 | 레이아웃 | 예시 |
+|------|---------|------|
+| 모든 선택지 ≤ 15자 | `inline` (탭 정렬 2줄) | ① apple ② banana ③ cherry |
+| 하나라도 > 15자 | `stacked` (각 1줄) | ① 긴 선택지 내용... |
+
+---
+
 ## 서브에이전트 검수 (★ 권장)
 
 > **문서 생성 후 별도 서브에이전트를 생성하여 품질 검증을 수행한다.**
@@ -870,7 +1059,9 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 25. **styleIDRef="0" 통일**: 다른 파일 병합 시 모든 문단의 styleIDRef를 "0"으로 변경 (스타일 기반 재정렬 방지)
 26. **ZIP 기반 파일 선택**: header가 큰(스타일 많은) 파일을 기반으로 사용. settings.xml/META-INF도 같은 파일에서 가져와야 호환
 28. **병합 시 content.hpf 필수 업데이트**: 기반 파일의 content.hpf만 복사하면 다른 파일의 이미지가 hpf에 미등록되어 엑스박스 표시. 병합 후 모든 BinData를 스캔하여 누락 항목을 `<opf:item>` 태그로 content.hpf에 등록해야 한다
+29. **시험 문제지는 워크플로우 J**: PDF 시험지/문제지/평가지 변환 시 `exam_builder.py` 사용. 엔드노트 정답, 탭 정렬 선택지 등 시험 전용 XML 패턴 지원. JSON 데이터를 입력받아 section0.xml을 동적 생성
 27. **글머리기호/번호는 텍스트로 삽입**: 한글의 `<hp:numbering>` 구조를 사용하지 않는다. 목록은 `"- 항목"`, `"1. 항목"` 텍스트를 직접 넣고 paraPr 들여쓰기로 단계를 표현. 의도적 설계 — 호환성과 단순성을 위해 네이티브 글머리기호를 사용하지 않음
+30. **템플릿 활용 시 플레이스홀더 검토 필수**: `fill_cells_directly()`로 기존 HWPX에 내용을 채울 때, 검증된 템플릿이 없으면 반드시 (1) `analyze_form_table()`로 구조 분석 → (2) 플레이스홀더(`{{제목}}` 등) 템플릿 생성 → (3) **STOP하여 사용자에게 열어 보여주고 검토** → (4) 확인 후 실제 내용 채우기 순서를 따른다. 이미 검증된 플레이스홀더 템플릿이 존재하면 이 단계를 건너뛸 수 있다
 
 ---
 
