@@ -319,8 +319,14 @@ class SectionBuilder:
             widest = col_widths.index(max(col_widths))
             col_widths[widest] += diff
 
-        # 동일 헤더 구조 표가 반복되면 첫 표의 열 너비를 재사용 → 너비 통일
-        cache_key = tuple(headers)
+        # 동일 헤더 구조 + 유사한 데이터 크기 분포 표가 반복되면 열 너비를 통일
+        # col_weights를 구간화(S/M/L/XL)해서 키의 일부로 사용 → 성격이 다른 표는 별개
+        def _bucket(w):
+            if w <= 10: return 'S'
+            if w <= 30: return 'M'
+            if w <= 100: return 'L'
+            return 'XL'
+        cache_key = (tuple(headers), tuple(_bucket(w) for w in col_weights))
         if cache_key in self._table_widths_cache:
             col_widths = list(self._table_widths_cache[cache_key])
         else:
