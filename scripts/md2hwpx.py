@@ -268,16 +268,46 @@ class SectionBuilder:
                     w += 1
             return max(w, 1)
 
+        def split_cell_lines(text: str) -> list:
+            """셀 텍스트를 여러 줄로 분할 (표 셀 내 개조식 렌더링).
+            1) <br>/<br/>/<br /> 명시적 줄바꿈 지원
+            2) 중간 위치의 bullet 기호(◦ ○ ● • ▪ ∘) 앞에서 자동 줄바꿈
+            3) 하위 항목 " - " 앞에서 자동 줄바꿈(들여쓰기 2칸 유지)
+            """
+            import re
+            t = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+            t = re.sub(r'(?<!^)(?<!\n)\s+(?=[◦○●•▪∘])', '\n', t)
+            t = re.sub(r'(?<!^)(?<!\n) - (?=\S)', '\n  - ', t)
+            lines = [ln.rstrip() for ln in t.split('\n') if ln.strip()]
+            return lines if lines else [text]
+
         col_weights = []
+        col_line_max_weights = []  # 셀 내 최장 줄 가중치 (줄바꿈 후)
         for ci in range(num_cols):
             max_w = text_weight(headers[ci])
+            max_line_w = text_weight(headers[ci])
             for row in rows:
                 if ci < len(row):
-                    max_w = max(max_w, text_weight(row[ci]))
+                    cell = row[ci]
+                    max_w = max(max_w, text_weight(cell))
+                    # 자동 줄바꿈 적용 후 최장 줄
+                    for line in split_cell_lines(cell):
+                        max_line_w = max(max_line_w, text_weight(line))
             col_weights.append(max_w)
+            col_line_max_weights.append(max_line_w)
+
+        # 짧은 텍스트(가중치 ≤ 14 ≈ 한글 7자)는 줄바꿈 없이 들어가도록 최소 너비 상향
+        # 한글 1자 ≈ 가중치 2 ≈ 900 HWPUNIT(10pt), 셀 마진 좌우 566, 여유 200
+        NO_WRAP_THRESHOLD = 14
+        CELL_PAD = 566 + 200
+        def required_width(line_weight):
+            if line_weight <= NO_WRAP_THRESHOLD:
+                return line_weight * 450 + CELL_PAD
+            return MIN_COL_WIDTH
+        col_min_widths = [max(MIN_COL_WIDTH, required_width(lw)) for lw in col_line_max_weights]
 
         total_weight = sum(col_weights)
-        col_widths = [max(MIN_COL_WIDTH, int(body_width * w / total_weight)) for w in col_weights]
+        col_widths = [max(col_min_widths[ci], int(body_width * col_weights[ci] / total_weight)) for ci in range(num_cols)]
 
         # 총합을 body_width에 맞춤
         diff = body_width - sum(col_widths)
@@ -293,19 +323,6 @@ class SectionBuilder:
         tbl_id = self._get_id()
 
         total_height = row_height * num_rows
-
-        def split_cell_lines(text: str) -> list:
-            """셀 텍스트를 여러 줄로 분할 (표 셀 내 개조식 렌더링).
-            1) <br>/<br/>/<br /> 명시적 줄바꿈 지원
-            2) 중간 위치의 bullet 기호(◦ ○ ● • ▪ ∘) 앞에서 자동 줄바꿈
-            3) 하위 항목 " - " 앞에서 자동 줄바꿈(들여쓰기 2칸 유지)
-            """
-            import re
-            t = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
-            t = re.sub(r'(?<!^)(?<!\n)\s+(?=[◦○●•▪∘])', '\n', t)
-            t = re.sub(r'(?<!^)(?<!\n) - (?=\S)', '\n  - ', t)
-            lines = [ln.rstrip() for ln in t.split('\n') if ln.strip()]
-            return lines if lines else [text]
 
         def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int) -> str:
             bf = "4" if is_header else "3"
