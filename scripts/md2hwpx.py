@@ -313,11 +313,19 @@ class SectionBuilder:
         col_widths = [max(col_min_widths[ci], int(body_width * col_weights[ci] / total_weight)) for ci in range(num_cols)]
 
         # 총합을 body_width에 맞춤
-        diff = body_width - sum(col_widths)
-        if diff != 0:
-            # 가장 넓은 열에서 보정
+        total = sum(col_widths)
+        if total > body_width:
+            # 초과 시 비례 축소 (각 열 MIN_COL_WIDTH 보장)
+            ratio = body_width / total
+            col_widths = [max(MIN_COL_WIDTH, int(w * ratio)) for w in col_widths]
+            diff = body_width - sum(col_widths)
+            if diff != 0:
+                idx = col_widths.index(max(col_widths))
+                col_widths[idx] += diff
+        elif total < body_width:
+            # 부족 시 가장 넓은 열에 추가
             widest = col_widths.index(max(col_widths))
-            col_widths[widest] += diff
+            col_widths[widest] += (body_width - total)
 
         # 동일 헤더 구조 + 유사한 데이터 크기 분포 표가 반복되면 열 너비를 통일
         # col_weights를 구간화(S/M/L/XL)해서 키의 일부로 사용 → 성격이 다른 표는 별개
@@ -445,18 +453,25 @@ class SectionBuilder:
                 widths.append(int(w.group(1)) if w else 0)
             groups[tuple(headers)].append((m.start(), m.end(), widths))
 
-        # 그룹별 max 너비 (합이 body_width 초과 시 가장 큰 열에서 보정)
+        # 그룹별 max 너비 (합이 body_width 초과 시 비례 축소)
         BODY_WIDTH = 42520
+        MIN_COL = 2800
         max_widths = {}
         for key, items in groups.items():
             if len(items) < 2:
                 continue
             nc = len(items[0][2])
             unified = [max(it[2][i] for it in items) for i in range(nc)]
-            overflow = sum(unified) - BODY_WIDTH
-            if overflow > 0:
-                widest_idx = unified.index(max(unified))
-                unified[widest_idx] -= overflow
+            total = sum(unified)
+            if total > BODY_WIDTH:
+                # 각 열을 최소 너비 보장하며 비례 축소
+                ratio = BODY_WIDTH / total
+                unified = [max(MIN_COL, int(w * ratio)) for w in unified]
+                # 반올림 오차·MIN 보정으로 생긴 diff를 가장 큰 열에 흡수
+                diff = BODY_WIDTH - sum(unified)
+                if diff != 0:
+                    idx = unified.index(max(unified))
+                    unified[idx] += diff
             max_widths[key] = unified
 
         if not max_widths:
