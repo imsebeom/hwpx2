@@ -281,31 +281,31 @@ class SectionBuilder:
             lines = [ln.rstrip() for ln in t.split('\n') if ln.strip()]
             return lines if lines else [text]
 
+        # 한글 10pt 가중치당 520 HWPUNIT + 셀 마진 좌우 566 + 줄끝 여유 280
+        NO_WRAP_THRESHOLD = 14  # 한글 7자 — 데이터 셀 줄바꿈 없음 보장 임계
+        CELL_PAD = 566 + 280
+        CHAR_UNIT = 520
+        def required_width(line_weight):
+            return line_weight * CHAR_UNIT + CELL_PAD
+
         col_weights = []
-        col_line_max_weights = []  # 셀 내 최장 줄 가중치 (줄바꿈 후)
+        col_min_widths = []
         for ci in range(num_cols):
             max_w = text_weight(headers[ci])
-            max_line_w = text_weight(headers[ci])
+            header_w = text_weight(headers[ci])
+            # 헤더는 길이에 관계없이 반드시 한 줄 보장
+            short_candidates = [MIN_COL_WIDTH, required_width(header_w)]
+            # 데이터 셀 내 임계 이하인 줄도 한 줄 보장
             for row in rows:
                 if ci < len(row):
                     cell = row[ci]
                     max_w = max(max_w, text_weight(cell))
-                    # 자동 줄바꿈 적용 후 최장 줄
                     for line in split_cell_lines(cell):
-                        max_line_w = max(max_line_w, text_weight(line))
+                        lw = text_weight(line)
+                        if lw <= NO_WRAP_THRESHOLD:
+                            short_candidates.append(required_width(lw))
             col_weights.append(max_w)
-            col_line_max_weights.append(max_line_w)
-
-        # 짧은 텍스트(가중치 ≤ 14 ≈ 한글 7자)는 줄바꿈 없이 들어가도록 최소 너비 상향
-        # 한글 10pt 1자 ≈ 1000 HWPUNIT (가중치 2), 여유 4% 포함 가중치당 520
-        # 셀 마진 좌우 566 + 줄끝 여유 280
-        NO_WRAP_THRESHOLD = 14
-        CELL_PAD = 566 + 280
-        def required_width(line_weight):
-            if line_weight <= NO_WRAP_THRESHOLD:
-                return line_weight * 520 + CELL_PAD
-            return MIN_COL_WIDTH
-        col_min_widths = [max(MIN_COL_WIDTH, required_width(lw)) for lw in col_line_max_weights]
+            col_min_widths.append(max(short_candidates))
 
         total_weight = sum(col_weights)
         col_widths = [max(col_min_widths[ci], int(body_width * col_weights[ci] / total_weight)) for ci in range(num_cols)]
