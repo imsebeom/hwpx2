@@ -325,12 +325,22 @@ class SectionBuilder:
 
         total_height = row_height * num_rows
 
+        BULLET_CHARS = ('◦', '○', '●', '•', '▪', '∘', '-')
+        header_profile = self.profile.get("table_header", self.profile["body"])
+        center_para_pr = header_profile.get("paraPr", "0")
+
         def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int) -> str:
             bf = "4" if is_header else "3"
             cp = self.profile.get("table_header" if is_header else "table_cell", self.profile["body"])
             char_pr = cp["charPr"]
-            para_pr = cp.get("paraPr", "0")
+            default_para_pr = cp.get("paraPr", "0")
             lines = split_cell_lines(text)
+            # 가운데 정렬 조건: 한 줄 + 불릿/하이픈 시작 아님 + 자동 줄바꿈 위험 없음(가중치 ≤ 14)
+            has_bullet = any(ln.lstrip().startswith(BULLET_CHARS) for ln in lines)
+            single_short = (len(lines) == 1 and not has_bullet
+                            and text_weight(lines[0]) <= NO_WRAP_THRESHOLD)
+            use_center = is_header or single_short
+            para_pr = center_para_pr if use_center else default_para_pr
             paras = []
             for line in lines:
                 cell_pid = self._get_id()
