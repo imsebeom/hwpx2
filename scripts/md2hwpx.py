@@ -297,12 +297,13 @@ class SectionBuilder:
             col_line_max_weights.append(max_line_w)
 
         # 짧은 텍스트(가중치 ≤ 14 ≈ 한글 7자)는 줄바꿈 없이 들어가도록 최소 너비 상향
-        # 한글 1자 ≈ 가중치 2 ≈ 900 HWPUNIT(10pt), 셀 마진 좌우 566, 여유 200
+        # 한글 10pt 1자 ≈ 1000 HWPUNIT (가중치 2), 여유 4% 포함 가중치당 520
+        # 셀 마진 좌우 566 + 줄끝 여유 280
         NO_WRAP_THRESHOLD = 14
-        CELL_PAD = 566 + 200
+        CELL_PAD = 566 + 280
         def required_width(line_weight):
             if line_weight <= NO_WRAP_THRESHOLD:
-                return line_weight * 450 + CELL_PAD
+                return line_weight * 520 + CELL_PAD
             return MIN_COL_WIDTH
         col_min_widths = [max(MIN_COL_WIDTH, required_width(lw)) for lw in col_line_max_weights]
 
