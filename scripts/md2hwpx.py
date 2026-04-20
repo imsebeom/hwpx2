@@ -154,6 +154,8 @@ class SectionBuilder:
         self.paragraphs: list[str] = []
         self._next_id = 1000000001
         self._first_para = True
+        # 동일 헤더 구조를 가진 표들의 열 너비 재사용 캐시
+        self._table_widths_cache: dict[tuple, list[int]] = {}
 
     def _get_id(self) -> str:
         pid = str(self._next_id)
@@ -316,6 +318,13 @@ class SectionBuilder:
             # 가장 넓은 열에서 보정
             widest = col_widths.index(max(col_widths))
             col_widths[widest] += diff
+
+        # 동일 헤더 구조 표가 반복되면 첫 표의 열 너비를 재사용 → 너비 통일
+        cache_key = tuple(headers)
+        if cache_key in self._table_widths_cache:
+            col_widths = list(self._table_widths_cache[cache_key])
+        else:
+            self._table_widths_cache[cache_key] = list(col_widths)
 
         row_height = 2400
 
