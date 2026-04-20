@@ -294,17 +294,36 @@ class SectionBuilder:
 
         total_height = row_height * num_rows
 
+        def split_cell_lines(text: str) -> list:
+            """셀 텍스트를 여러 줄로 분할.
+            1) <br>/<br/>/<br /> 명시적 줄바꿈 지원
+            2) 첫 글자가 아닌 곳의 bullet 기호(◦ ○ ● • ▪ ∘) 앞에서 자동 줄바꿈
+            """
+            import re
+            t = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
+            t = re.sub(r'(?<!^)(?<!\n)\s+(?=[◦○●•▪∘])', '\n', t)
+            lines = [ln.strip() for ln in t.split('\n')]
+            lines = [ln for ln in lines if ln]
+            return lines if lines else [text]
+
         def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int) -> str:
             bf = "4" if is_header else "3"
             cp = self.profile.get("table_header" if is_header else "table_cell", self.profile["body"])
             char_pr = cp["charPr"]
             para_pr = cp.get("paraPr", "0")
-            cell_pid = self._get_id()
+            lines = split_cell_lines(text)
+            paras = []
+            for line in lines:
+                cell_pid = self._get_id()
+                paras.append(
+                    f'            <hp:p paraPrIDRef="{para_pr}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0" id="{cell_pid}">\n'
+                    f'              <hp:run charPrIDRef="{char_pr}"><hp:t>{xml_escape(line)}</hp:t></hp:run>\n'
+                    f'            </hp:p>'
+                )
+            paras_xml = "\n".join(paras)
             return f'''        <hp:tc name="" header="{1 if is_header else 0}" hasMargin="1" protect="0" editable="0" dirty="1" borderFillIDRef="{bf}">
           <hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">
-            <hp:p paraPrIDRef="{para_pr}" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0" id="{cell_pid}">
-              <hp:run charPrIDRef="{char_pr}"><hp:t>{xml_escape(text)}</hp:t></hp:run>
-            </hp:p>
+{paras_xml}
           </hp:subList>
           <hp:cellAddr colAddr="{col_idx}" rowAddr="{row_idx}"/>
           <hp:cellSpan colSpan="1" rowSpan="1"/>
