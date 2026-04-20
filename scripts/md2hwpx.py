@@ -295,15 +295,16 @@ class SectionBuilder:
         total_height = row_height * num_rows
 
         def split_cell_lines(text: str) -> list:
-            """셀 텍스트를 여러 줄로 분할.
+            """셀 텍스트를 여러 줄로 분할 (표 셀 내 개조식 렌더링).
             1) <br>/<br/>/<br /> 명시적 줄바꿈 지원
-            2) 첫 글자가 아닌 곳의 bullet 기호(◦ ○ ● • ▪ ∘) 앞에서 자동 줄바꿈
+            2) 중간 위치의 bullet 기호(◦ ○ ● • ▪ ∘) 앞에서 자동 줄바꿈
+            3) 하위 항목 " - " 앞에서 자동 줄바꿈(들여쓰기 2칸 유지)
             """
             import re
             t = re.sub(r'<br\s*/?>', '\n', text, flags=re.IGNORECASE)
             t = re.sub(r'(?<!^)(?<!\n)\s+(?=[◦○●•▪∘])', '\n', t)
-            lines = [ln.strip() for ln in t.split('\n')]
-            lines = [ln for ln in lines if ln]
+            t = re.sub(r'(?<!^)(?<!\n) - (?=\S)', '\n  - ', t)
+            lines = [ln.rstrip() for ln in t.split('\n') if ln.strip()]
             return lines if lines else [text]
 
         def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int) -> str:
