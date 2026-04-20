@@ -352,7 +352,8 @@ class SectionBuilder:
         header_profile = self.profile.get("table_header", self.profile["body"])
         center_para_pr = header_profile.get("paraPr", "0")
 
-        def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int) -> str:
+        def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int,
+                      row_span: int = 1) -> str:
             bf = "4" if is_header else "3"
             cp = self.profile.get("table_header" if is_header else "table_cell", self.profile["body"])
             char_pr = cp["charPr"]
@@ -371,13 +372,14 @@ class SectionBuilder:
                     f'            </hp:p>'
                 )
             paras_xml = "\n".join(paras)
+            cell_height = row_height * row_span
             return f'''        <hp:tc name="" header="{1 if is_header else 0}" hasMargin="1" protect="0" editable="0" dirty="1" borderFillIDRef="{bf}">
           <hp:subList id="" textDirection="HORIZONTAL" lineWrap="BREAK" vertAlign="CENTER" linkListIDRef="0" linkListNextIDRef="0" textWidth="0" textHeight="0" hasTextRef="0" hasNumRef="0">
 {paras_xml}
           </hp:subList>
           <hp:cellAddr colAddr="{col_idx}" rowAddr="{row_idx}"/>
-          <hp:cellSpan colSpan="1" rowSpan="1"/>
-          <hp:cellSz width="{col_widths[col_idx]}" height="{row_height}"/>
+          <hp:cellSpan colSpan="1" rowSpan="{row_span}"/>
+          <hp:cellSz width="{col_widths[col_idx]}" height="{cell_height}"/>
           <hp:cellMargin left="283" right="283" top="142" bottom="142"/>
         </hp:tc>'''
 
@@ -385,13 +387,29 @@ class SectionBuilder:
         header_cells = "\n".join(make_cell(h, True, i, 0) for i, h in enumerate(headers))
         header_row = f"      <hp:tr>\n{header_cells}\n      </hp:tr>"
 
-        # 데이터 행
+        # 데이터 행 — 첫 열 연속 빈 셀은 위 주 셀과 병합(rowSpan 확장)
+        # 주 셀을 제외한 병합 흡수 셀은 XML에서 생략 (HWPX 표준)
+        first_col_rowspan = [1] * len(rows)   # 각 행의 첫 열 rowSpan
+        first_col_skip = [False] * len(rows)  # 해당 행의 첫 셀을 XML에서 생략
+        main_ri = None
+        for ri, row in enumerate(rows):
+            first_cell = row[0] if row else ''
+            if first_cell.strip():
+                main_ri = ri
+            elif main_ri is not None:
+                first_col_rowspan[main_ri] += 1
+                first_col_skip[ri] = True
+
         data_rows = []
         for ri, row in enumerate(rows):
-            # 열 수 맞추기
             padded = row + [""] * (num_cols - len(row))
-            cells = "\n".join(make_cell(padded[ci], False, ci, ri + 1) for ci in range(num_cols))
-            data_rows.append(f"      <hp:tr>\n{cells}\n      </hp:tr>")
+            cell_xmls = []
+            for ci in range(num_cols):
+                if ci == 0 and first_col_skip[ri]:
+                    continue  # 병합으로 흡수된 셀은 XML에서 제외
+                rs = first_col_rowspan[ri] if ci == 0 else 1
+                cell_xmls.append(make_cell(padded[ci], False, ci, ri + 1, rs))
+            data_rows.append(f"      <hp:tr>\n" + "\n".join(cell_xmls) + f"\n      </hp:tr>")
 
         all_rows = header_row + "\n" + "\n".join(data_rows)
 
