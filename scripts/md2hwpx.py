@@ -326,6 +326,7 @@ class SectionBuilder:
         total_height = row_height * num_rows
 
         BULLET_CHARS = ('◦', '○', '●', '•', '▪', '∘', '-')
+        CENTER_MAX_WEIGHT = 18  # 한 줄 셀의 가운데 정렬 상한 (한글 ~9자)
         header_profile = self.profile.get("table_header", self.profile["body"])
         center_para_pr = header_profile.get("paraPr", "0")
 
@@ -335,10 +336,10 @@ class SectionBuilder:
             char_pr = cp["charPr"]
             default_para_pr = cp.get("paraPr", "0")
             lines = split_cell_lines(text)
-            # 가운데 정렬 조건: 한 줄 + 불릿/하이픈 시작 아님 + 자동 줄바꿈 위험 없음(가중치 ≤ 14)
+            # 가운데 정렬 조건: 한 줄 + 불릿/하이픈 시작 아님 + 가중치 ≤ CENTER_MAX_WEIGHT
             has_bullet = any(ln.lstrip().startswith(BULLET_CHARS) for ln in lines)
             single_short = (len(lines) == 1 and not has_bullet
-                            and text_weight(lines[0]) <= NO_WRAP_THRESHOLD)
+                            and text_weight(lines[0]) <= CENTER_MAX_WEIGHT)
             use_center = is_header or single_short
             para_pr = center_para_pr if use_center else default_para_pr
             paras = []
