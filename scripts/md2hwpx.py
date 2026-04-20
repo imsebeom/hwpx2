@@ -387,27 +387,30 @@ class SectionBuilder:
         header_cells = "\n".join(make_cell(h, True, i, 0) for i, h in enumerate(headers))
         header_row = f"      <hp:tr>\n{header_cells}\n      </hp:tr>"
 
-        # 데이터 행 — 첫 열 연속 빈 셀은 위 주 셀과 병합(rowSpan 확장)
-        # 주 셀을 제외한 병합 흡수 셀은 XML에서 생략 (HWPX 표준)
-        first_col_rowspan = [1] * len(rows)   # 각 행의 첫 열 rowSpan
-        first_col_skip = [False] * len(rows)  # 해당 행의 첫 셀을 XML에서 생략
-        main_ri = None
+        # 데이터 행 — 셀 값이 '^' 또는 '^^'이면 위 셀과 rowSpan 병합
+        # (빈 셀은 그냥 빈 셀. 병합은 명시적 토큰으로만.)
+        MERGE_UP_TOKENS = {'^', '^^'}
+        # cell_rowspan[ri][ci] = 해당 셀의 rowSpan, 0이면 병합 흡수되어 XML 생략
+        cell_rowspan = [[1] * num_cols for _ in range(len(rows))]
+        main_row_for_col = [None] * num_cols  # 각 열의 마지막 주 셀 행
         for ri, row in enumerate(rows):
-            first_cell = row[0] if row else ''
-            if first_cell.strip():
-                main_ri = ri
-            elif main_ri is not None:
-                first_col_rowspan[main_ri] += 1
-                first_col_skip[ri] = True
+            for ci in range(num_cols):
+                val = row[ci] if ci < len(row) else ''
+                if val.strip() in MERGE_UP_TOKENS and main_row_for_col[ci] is not None:
+                    # 병합: 위 주 셀 rowSpan++, 현재 셀 스킵
+                    cell_rowspan[main_row_for_col[ci]][ci] += 1
+                    cell_rowspan[ri][ci] = 0
+                else:
+                    main_row_for_col[ci] = ri
 
         data_rows = []
         for ri, row in enumerate(rows):
             padded = row + [""] * (num_cols - len(row))
             cell_xmls = []
             for ci in range(num_cols):
-                if ci == 0 and first_col_skip[ri]:
-                    continue  # 병합으로 흡수된 셀은 XML에서 제외
-                rs = first_col_rowspan[ri] if ci == 0 else 1
+                rs = cell_rowspan[ri][ci]
+                if rs == 0:
+                    continue  # 병합 흡수 셀 XML 생략
                 cell_xmls.append(make_cell(padded[ci], False, ci, ri + 1, rs))
             data_rows.append(f"      <hp:tr>\n" + "\n".join(cell_xmls) + f"\n      </hp:tr>")
 
