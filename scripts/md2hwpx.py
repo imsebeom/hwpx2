@@ -412,10 +412,82 @@ class SectionBuilder:
     def build_xml(self) -> str:
         """완성된 section0.xml 문자열 반환."""
         body = "\n".join(self.paragraphs)
+        body = self._unify_table_widths(body)
         return f'''<?xml version='1.0' encoding='UTF-8'?>
 <hs:sec {NS_DECL}>
 {body}
 </hs:sec>'''
+
+    @staticmethod
+    def _unify_table_widths(body: str) -> str:
+        """같은 헤더 구조의 표들은 열 너비를 그룹별 최대값으로 통일."""
+        from collections import defaultdict
+        tbl_pat = re.compile(r'<hp:tbl[^>]*>.*?</hp:tbl>', re.DOTALL)
+        tc_pat = re.compile(r'<hp:tc[^>]*>.*?</hp:tc>', re.DOTALL)
+
+        # 그룹: headers tuple -> [(start, end, widths), ...]
+        groups = defaultdict(list)
+        for m in tbl_pat.finditer(body):
+            tbl = m.group()
+            col_m = re.search(r'colCnt="(\d+)"', tbl)
+            if not col_m:
+                continue
+            nc = int(col_m.group(1))
+            tcs = tc_pat.findall(tbl)
+            if len(tcs) < nc:
+                continue
+            headers = []
+            widths = []
+            for tc in tcs[:nc]:
+                ts = re.findall(r'<hp:t>([^<]+)</hp:t>', tc)
+                headers.append(ts[0] if ts else '')
+                w = re.search(r'<hp:cellSz width="(\d+)"', tc)
+                widths.append(int(w.group(1)) if w else 0)
+            groups[tuple(headers)].append((m.start(), m.end(), widths))
+
+        # 그룹별 max 너비 (합이 body_width 초과 시 가장 큰 열에서 보정)
+        BODY_WIDTH = 42520
+        max_widths = {}
+        for key, items in groups.items():
+            if len(items) < 2:
+                continue
+            nc = len(items[0][2])
+            unified = [max(it[2][i] for it in items) for i in range(nc)]
+            overflow = sum(unified) - BODY_WIDTH
+            if overflow > 0:
+                widest_idx = unified.index(max(unified))
+                unified[widest_idx] -= overflow
+            max_widths[key] = unified
+
+        if not max_widths:
+            return body
+
+        # 뒤에서부터 치환 (인덱스 밀림 방지)
+        all_updates = []
+        for key, items in groups.items():
+            if key not in max_widths:
+                continue
+            unified = max_widths[key]
+            for start, end, _ in items:
+                all_updates.append((start, end, unified))
+        all_updates.sort(key=lambda x: -x[0])
+
+        cell_sz_pat = re.compile(r'<hp:cellSz width="\d+"')
+        for start, end, unified in all_updates:
+            tbl_xml = body[start:end]
+            col_m = re.search(r'colCnt="(\d+)"', tbl_xml)
+            if not col_m:
+                continue
+            nc = int(col_m.group(1))
+            idx = [0]
+            def repl(m, nc=nc, unified=unified, idx=idx):
+                w = unified[idx[0] % nc]
+                idx[0] += 1
+                return f'<hp:cellSz width="{w}"'
+            new_tbl = cell_sz_pat.sub(repl, tbl_xml)
+            body = body[:start] + new_tbl + body[end:]
+
+        return body
 
 
 # ─── 마크다운 파서 ───────────────────────────────────────────────
