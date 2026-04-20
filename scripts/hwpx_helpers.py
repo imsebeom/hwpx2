@@ -472,6 +472,8 @@ def insert_image_at(hwpx_path, img_path, anchor_text, width_mm=120,
                     zout.writestr(item, zin.read(item.filename))
             zout.write(img_path, f"BinData/{fname}")
 
+    os.replace(tmp, out)
+
 
 # =============================================================================
 # rhwp 기반 헬퍼 (edwardkim/rhwp, MIT License 참조)
