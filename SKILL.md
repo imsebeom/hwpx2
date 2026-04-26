@@ -151,9 +151,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" result.hwpx
 - 줄간격: 160% (report 템플릿 기본값)
 - 표/이미지: `treatAsChar="1"` (글자처럼 취급)
 
-### 서식 후처리 (페이지넘김·빈줄 삽입)
+### 서식 후처리 (빈 줄 삽입)
 
-md2hwpx.py는 모든 문단을 연속 배치한다. 헤딩 앞 페이지넘김, 빈 줄 등은 section0.xml을 후처리하여 삽입한다.
+md2hwpx.py는 모든 문단을 연속 배치한다. 대단원(`##`) 앞 빈 줄 2개, 중단원(`###`) 앞 빈 줄 1개, 표 뒤 빈 줄 1개는 section0.xml을 후처리하여 삽입한다. 페이지넘김은 사용하지 않는다 — 강제 페이지 분리는 레이아웃을 흐트러뜨리므로, 구분은 공백으로만 표현한다.
 
 ```python
 import zipfile, re, os
@@ -161,9 +161,9 @@ import zipfile, re, os
 def format_spacing(hwpx_path):
     """
     report 템플릿 기준:
-    - ## (charPrIDRef="8") 앞에 pageBreak="1"
-    - ### (charPrIDRef="13") 앞에 빈 줄
-    - 표(</hp:tbl>) 뒤에 빈 줄
+    - ## (charPrIDRef="8") 앞에 빈 줄 2개
+    - ### (charPrIDRef="13") 앞에 빈 줄 1개
+    - 표(</hp:tbl>) 뒤에 빈 줄 1개
     """
     with zipfile.ZipFile(str(hwpx_path), "r") as z:
         section = z.read("Contents/section0.xml").decode("utf-8")
@@ -176,13 +176,17 @@ def format_spacing(hwpx_path):
                 f'pageBreak="0" columnBreak="0" merged="0">'
                 f'<hp:run charPrIDRef="0"><hp:t/></hp:run></hp:p>')
 
-    # 1. ## 헤딩 → pageBreak="1"
-    for m in re.finditer(r'<hp:p\s[^>]*?pageBreak="0"[^>]*>', section):
-        run_area = section[m.start():m.start()+500]
-        if 'charPrIDRef="8"' in run_area:
-            old_tag = section[m.start():m.end()]
-            section = section[:m.start()] + old_tag.replace(
-                'pageBreak="0"', 'pageBreak="1"') + section[m.end():]
+    # 1. ## 헤딩 앞에 빈 줄 2개 (문서 선두의 ## 제외)
+    h2_pos = [m.start() for m in re.finditer(
+        r'<hp:p\s[^>]*?pageBreak="[01]"[^>]*>', section)
+        if 'charPrIDRef="8"' in section[m.start():m.start()+500]]
+    body_start = section.find('<hs:sec')
+    body_start = section.find('>', body_start) + 1 if body_start != -1 else 0
+    for pos in reversed(h2_pos):
+        # 문서 맨 앞의 첫 ## 에는 공백 삽입 안 함
+        if pos <= body_start + 200:
+            continue
+        section = section[:pos] + empty_para() + "\n" + empty_para() + "\n" + section[pos:]
 
     # 2. ### 헤딩 앞에 빈 줄 (뒤→앞 삽입)
     h3_pos = [m.start() for m in re.finditer(
@@ -968,6 +972,9 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" --result output.hwpx
 # JSON 리포트 출력 (자동화용)
 python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" \
   --source original.hwpx --result output.hwpx --json report.json
+
+# polaris-dvc strict 검증 (JID 위반 검출)
+python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" --result output.hwpx --strict
 ```
 
 ### 검수 항목
@@ -980,6 +987,20 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" \
 | 런 보존 | 원본 대비 런(run) 수 | **감소 시 FAIL** |
 | 테이블·이미지 | 원본 대비 수량 | 감소 시 FAIL |
 | section 크기 | 원본 대비 비율 | 50% 미만 시 FAIL |
+| **polaris-dvc** (`--strict`) | JID 위반 (구조·컨테이너·규칙) | 위반 1건 이상 |
+
+### polaris-dvc strict 모드
+
+`--strict` 플래그를 주면 [PolarisOffice/polaris_dvc](https://github.com/PolarisOffice/polaris_dvc) 바이너리(`bin/polaris-dvc.exe`)가 호출되어 JID 위반을 검출한다. 4축 검증:
+
+| 축 | JID | 내용 |
+|---|---|---|
+| 규칙 적합성 | 1000–7999 | 폰트·크기·스타일 (spec JSON 필요, `--spec` 으로 전달) |
+| 구조 무결성 | 11000–11999 | charPrIDRef cross-ref, lineSegArray, manifest ↔ BinData |
+| 컨테이너 건전성 | 12000–12999 | ZIP mimetype, 필수 entry, `__MACOSX/` 금지 |
+| 스키마 적합성 | 13000–13999 | KS X 6101 XSD (오탐 多 — 기본 비활성) |
+
+바이너리 미설치 시 graceful 폴백 (warning만 남기고 통과). 사후 발견된 알려진 패턴: hwpx 스킬이 만든 문서는 paragraph의 lineSegArray가 비어 JID 11004를 다수 발생시킨다 — HwpOffice는 보정해서 열지만 다른 구현체에는 깨진 파일로 보일 수 있음.
 
 ### 서브에이전트 워크플로우 예시
 

@@ -440,8 +440,10 @@ class SectionBuilder:
 
     def build_xml(self) -> str:
         """완성된 section0.xml 문자열 반환."""
+        from hwpx_helpers import inject_dummy_linesegs
         body = "\n".join(self.paragraphs)
         body = self._unify_table_widths(body)
+        body, _ = inject_dummy_linesegs(body)
         return f'''<?xml version='1.0' encoding='UTF-8'?>
 <hs:sec {NS_DECL}>
 {body}

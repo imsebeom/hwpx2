@@ -20,6 +20,68 @@ MIME_MAP = {
     "png": "image/png", "bmp": "image/bmp", "gif": "image/gif",
 }
 
+# 빈 lineSegArray 가 들어 있는 paragraph 는 polaris-dvc 가 JID 11004 ("paragraph
+# has text but empty lineSegArray") 로 잡는다. HwpOffice 는 알아서 보정해 열지만
+# 후발 검증기·구현체 호환을 위해 기본 더미를 박아 둔다 — 한글이 다음 편집 시
+# 자동으로 재계산하므로 시각적 영향 없음. (참조: PolarisOffice/polaris_dvc v0.1.0)
+LINESEG_DUMMY = (
+    '<hp:linesegarray><hp:lineseg textpos="0" vertpos="0" '
+    'vertsize="900" textheight="900" baseline="765" spacing="360" '
+    'horzpos="0" horzsize="22960" flags="393216"/></hp:linesegarray>'
+)
+
+
+def inject_dummy_linesegs(section_xml: str) -> tuple[str, int]:
+    """linesegarray 가 없는 paragraph 에 더미를 박아 넣는다.
+
+    `</hp:p>` 직전 위치에 단 1회만 삽입하며, 이미 linesegarray 가 존재하는
+    paragraph 는 건드리지 않는다.
+
+    Returns:
+        (변환된 XML, 삽입된 paragraph 수)
+    """
+    pattern = re.compile(r"(<hp:p [^>]*>)(.*?)(</hp:p>)", re.DOTALL)
+    count = 0
+
+    def repl(m: "re.Match[str]") -> str:
+        nonlocal count
+        body = m.group(2)
+        if "<hp:linesegarray" in body:
+            return m.group(0)
+        count += 1
+        return m.group(1) + body + LINESEG_DUMMY + m.group(3)
+
+    new_xml = pattern.sub(repl, section_xml)
+    return new_xml, count
+
+
+def ensure_dummy_linesegs_etree(section_tree) -> int:
+    """lxml etree 기반: 모든 `<hp:p>` 에 linesegarray 가 없으면 더미를 박는다.
+
+    `hwpx_modifier`/`hwpx_form_filler` 처럼 etree 로 작업하는 파이프라인용.
+    string-기반의 :func:`inject_dummy_linesegs` 와 효과 동일.
+
+    Returns:
+        삽입된 paragraph 수
+    """
+    from lxml import etree
+
+    ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}"
+    count = 0
+    for p in section_tree.iter(f"{ns}p"):
+        if p.find(f"{ns}linesegarray") is not None:
+            continue
+        seg_arr = etree.SubElement(p, f"{ns}linesegarray")
+        etree.SubElement(
+            seg_arr,
+            f"{ns}lineseg",
+            textpos="0", vertpos="0", vertsize="900",
+            textheight="900", baseline="765", spacing="360",
+            horzpos="0", horzsize="22960", flags="393216",
+        )
+        count += 1
+    return count
+
 # --- 네임스페이스 선언 (section0.xml 루트에 사용) ---
 NS_DECL = (
     'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '
