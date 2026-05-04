@@ -58,6 +58,8 @@ ${CLAUDE_SKILL_DIR}/
 |--------|------|------|
 | 표 계산식 엔진 | `scripts/table_calc.py` | SUM/AVG/MIN/MAX/COUNT/IF + 범위·방향 참조. 표 셀 수식 평가 |
 | **HWPX FORMULA 필드 주입** | `hwpx_helpers.py` — `apply_formula_to_cell()`, `build_formula_run_inner_xml()` | HwpOffice 실스펙 구조로 필드 삽입. F9로 재계산 가능 (2026-04-19 검증) |
+| **셀 시맨틱 편집 6종** | `hwpx_modifier.py` — `set_cell_bg/border/size/inner_margin`, `set_table_border_color`, `merge_cells` | 표 셀 시각 속성을 좌표 기반으로 직접 편집. borderFill 풀 자동 등록·dedup. (2026-05-04, woo773/hangle 어휘 차용) |
+| **단위 변환 + borderFill 빌더** | `hwpx_helpers.py` — `mm_to_hwpunit`, `pt_to_hwpunit`, `rgb_to_hex`, `build_border_fill_xml`, `border_fill_signature` | mm·pt → HWPUNIT 변환 + borderFill XML 단독 빌더 (2026-05-04) |
 | `local_name()` / `xpath_local()` | `hwpx_helpers.py` | 네임스페이스 prefix 무관 XPath 검색 |
 | `utf16_len()` / `tab_aware_offset()` | `hwpx_helpers.py` | 탭 8 코드유닛 동기화 (charShape 경계 계산용) |
 | zip bomb 상한 체크 | `verify_hwpx.py`, `hwpx_helpers.py` | XML 32MB / BinData 64MB |
@@ -635,6 +637,77 @@ modify_hwpx_template(
 | `set_paragraph_indent(text, left)` | 특정 텍스트 포함 문단 들여쓰기 |
 
 > **들여쓰기 단위**: 한글 "왼쪽 10" = 1000 HWPUNIT, 1mm = 283 HWPUNIT
+
+### 셀 시맨틱 편집 메서드 (woo773/hangle 어휘 차용, 2026-05-04)
+
+> **표 셀의 시각 속성을 좌표 기반으로 직접 편집한다. borderFill 풀에 자동 등록·dedup 되며 lineSegArray 더미 처리와 호환.**
+> 의존성 추가 없음 (순수 Python + lxml). win32com 미사용.
+
+| 메서드 | 설명 |
+|--------|------|
+| `set_cell_bg(table_index, row, col, r, g, b)` | 셀 배경 RGB. 기존 테두리 유지. (woo773 `셀배경색`) |
+| `set_cell_border(table_index, row, col, side, style, color=None, width_mm=None)` | 셀 한 면 테두리. side: top/bottom/left/right/all, style: none/solid/thick/dotted/dashed/double. `width_mm` 으로 임의 두께 지정 가능 (기본: solid 0.12mm, thick 0.4mm). 'thick' 은 type=SOLID + width=0.4mm 의 조합. **THICK 은 HWPX 에 존재하지 않는 type 이므로 사용 금지** |
+| `set_cell_size(table_index, row, col, width_mm=None, height_mm=None)` | 셀 폭·높이 mm. (woo773 `셀너비/셀높이`) |
+| `set_cell_inner_margin(table_index, row, col, top_mm, bottom_mm, left_mm, right_mm)` | 셀 안쪽 여백 mm. (woo773 `안쪽여백`) |
+| `set_table_border_color(table_index, r, g, b)` | 표 안 모든 SOLID 테두리 색 일괄 변경. NONE은 그대로. (woo773 `테두리색`) |
+| `merge_cells(table_index, row, col, rowspan, colspan)` | 영역 병합 — anchor `cellSpan` 갱신 + 가려진 `<hp:tc>` 삭제 + width/height 합산 |
+| `apply_run_charpr_variant(table_index, row, col, **kwargs)` | 셀 안 모든 `<hp:run>` 에 charPr 변형 적용. kwargs: `width`(장평 %), `letter_spacing`(자간 %), `bold`, `italic`, `underline`, `text_color` |
+| `table_cursor(table_index)` | 메서드 체이닝 인터페이스 (TableCursor 반환) |
+
+### TableCursor — 메서드 체이닝 인터페이스 (2026-05-04)
+
+좌표 + 셀 편집을 점(.)으로 이어 부르는 fluent 인터페이스. 외부 의존성 0,
+순수 Python wrapper.
+
+| 메서드 | 설명 |
+|---|---|
+| `at(row, col)` | 좌표 이동 |
+| `right(n)` / `left(n)` / `up(n)` / `down(n)` | 상대 이동 |
+| `bg(r,g,b)` | 배경 RGB |
+| `border(side, style, color, width_mm)` | 셀 테두리 |
+| `size(width_mm, height_mm)` | 셀 크기 |
+| `inner_margin(top, bot, left, right)` | 셀 안쪽 여백 mm |
+| `merge(rowspan, colspan)` | 영역 병합 |
+| `bold(on)` / `italic(on)` / `underline(on)` | 진하게/기울임/밑줄 |
+| `width(percent)` | 장평 % (woo773 `장평`) |
+| `letter_spacing(percent)` | 자간 % (woo773 `자간`) |
+| `text_color(color)` | 글자색 |
+| `text(s)` | 셀 텍스트 교체 |
+
+```python
+with HwpxModifier("template.hwpx") as doc:
+    cur = doc.table_cursor(0)
+    # 헤더 4셀 진하게 + 옅은 파랑 배경
+    for c in range(4):
+        cur.at(0, c).bg(218,229,243).bold().text(f"열{c}")
+    # 강조 셀
+    cur.at(1, 1).text_color((220,20,60)).bold().letter_spacing(-12).text("100")
+    # 영역 병합
+    cur.at(1, 2).merge(rowspan=2, colspan=2).text("MERGED")
+    doc.save("output.hwpx")
+```
+
+```python
+with HwpxModifier("표양식.hwpx") as doc:
+    # 헤더 행 진한 파랑 배경
+    for c in range(4):
+        doc.set_cell_bg(0, 0, c, 218, 229, 243)
+    # 표 전체 테두리색 진한 파랑
+    doc.set_table_border_color(0, 25, 54, 87)
+    # (1,1) 셀 위·아래 굵은선
+    doc.set_cell_border(0, 1, 1, 'all', 'thick')
+    # (2,2) 셀 안쪽 여백 2mm
+    doc.set_cell_inner_margin(0, 2, 2, 2, 2, 2, 2)
+    # (3,0) 셀 높이 20mm
+    doc.set_cell_size(0, 3, 0, height_mm=20)
+    # (1,2)~(2,3) 영역을 2x2 로 병합
+    doc.merge_cells(0, 1, 2, rowspan=2, colspan=2)
+    doc.save("output.hwpx")
+```
+
+> **borderFill dedup**: 같은 시각 속성(테두리 4면 + 색 + 배경)이면 동일 borderFill id 를 재사용한다. `border_fill_signature()` 키 기반.
+> **단위 변환**: `hwpx_helpers.mm_to_hwpunit(mm)`, `pt_to_hwpunit(pt)`, `rgb_to_hex(r,g,b)`.
+> **borderFill 빌더**: `hwpx_helpers.build_border_fill_xml(id, left, right, top, bottom, border_color, bg_rgb)` 단독 사용 가능.
 
 ---
 

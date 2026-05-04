@@ -807,3 +807,244 @@ def apply_formula_to_cell(tc, field_id, formula, result_str, *,
     for child in new_run:
         run.append(child)
     return True
+
+
+# --- 단위 변환 (HWPX HWPUNIT 체계) -----------------------------------
+#
+# HWPX 의 길이는 두 가지 단위가 혼재한다:
+#   * HWPUNIT  = 1/7200 인치 ≈ 1/100 pt. 1 pt = 100, 1 mm ≈ 283.5
+#   * 테두리/여백 일부는 사람이 읽는 "0.12 mm" 형태 문자열로 저장됨
+# 사용자 코드는 mm·pt 단위로 받아 내부에서 HWPUNIT 으로 변환한다.
+
+HWPUNIT_PER_MM = 283.464566929  # 7200 / 25.4
+HWPUNIT_PER_PT = 100
+
+
+def mm_to_hwpunit(mm: float) -> int:
+    """밀리미터를 HWPUNIT(1/7200 inch) 정수로 변환."""
+    return int(round(float(mm) * HWPUNIT_PER_MM))
+
+
+def pt_to_hwpunit(pt: float) -> int:
+    """포인트를 HWPUNIT 정수로 변환 (1pt = 100 HWPUNIT)."""
+    return int(round(float(pt) * HWPUNIT_PER_PT))
+
+
+def rgb_to_hex(r: int, g: int, b: int) -> str:
+    """``(218, 229, 243)`` → ``"#DAE5F3"`` (HWPX 색상 표기)."""
+    return "#{:02X}{:02X}{:02X}".format(int(r) & 0xFF, int(g) & 0xFF, int(b) & 0xFF)
+
+
+# --- 셀 테두리/배경 borderFill 빌더 -----------------------------------
+#
+# HWPX 의 셀 시각 속성(테두리·배경)은 모두 header.xml 의 `<hh:borderFill>` 풀에
+# 등록된 다음 셀(`<hp:tc>`)이 ``borderFillIDRef`` 로 참조한다. 같은 외형은 동일
+# borderFill 을 공유해야 파일이 부풀지 않는다.
+#
+# 본 모듈은 단일 borderFill XML 문자열을 만드는 빌더만 제공한다. 풀 등록·dedup·
+# id 부여는 :class:`HwpxModifier` 의 ``_register_border_fill`` 이 담당한다.
+
+# 표준 테두리 변형. (type, width) 튜플.
+BORDER_NONE     = ("NONE",        "0.1 mm")
+BORDER_SOLID    = ("SOLID",       "0.12 mm")
+BORDER_THICK    = ("SOLID",       "0.4 mm")    # 굵은 실선
+BORDER_DOTTED   = ("DOT",         "0.12 mm")
+BORDER_DASHED   = ("DASH",        "0.12 mm")
+BORDER_DOUBLE   = ("DOUBLE_SLIM", "0.4 mm")    # sample.hwpx 에서 실측
+
+DEFAULT_BORDER_COLOR = "#000000"
+
+
+def _border_spec(side_spec):
+    """``side_spec`` 정규화. None → BORDER_NONE, 문자열·튜플 모두 허용.
+
+    허용 형태:
+      * None / "none"           → 투명
+      * "solid" / "thick" / "dotted" / "dashed" / "double"  → 표준 변형
+      * (type, width)           → 직접 지정. width 는 ``"0.12 mm"`` 형식 문자열
+      * (type, width, color)    → 색까지 직접 지정
+    """
+    if side_spec is None:
+        return BORDER_NONE + (DEFAULT_BORDER_COLOR,)
+    if isinstance(side_spec, str):
+        key = side_spec.lower()
+        return {
+            "none":    BORDER_NONE,
+            "solid":   BORDER_SOLID,
+            "thick":   BORDER_THICK,
+            "dotted":  BORDER_DOTTED,
+            "dashed":  BORDER_DASHED,
+            "double":  BORDER_DOUBLE,
+        }[key] + (DEFAULT_BORDER_COLOR,)
+    if isinstance(side_spec, tuple):
+        if len(side_spec) == 2:
+            return tuple(side_spec) + (DEFAULT_BORDER_COLOR,)
+        if len(side_spec) == 3:
+            return tuple(side_spec)
+    raise ValueError(f"Invalid border spec: {side_spec!r}")
+
+
+def build_border_fill_xml(
+    border_id,
+    *,
+    left=None, right=None, top=None, bottom=None,
+    border_color=None,
+    bg_rgb=None,
+):
+    """단일 ``<hh:borderFill>`` 문자열 생성.
+
+    Args:
+        border_id: borderFill id (정수 또는 문자열).
+        left/right/top/bottom: 변별 (:func:`_border_spec` 참조). 미지정 시 NONE.
+        border_color: 4면 일괄 색상. ``"#193657"`` 또는 ``(25,54,87)``. 변별 자체에
+            색이 들어 있으면 그게 우선.
+        bg_rgb: 셀 배경. ``(r,g,b)`` 또는 ``"#DAE5F3"``. None 이면 fillBrush 생략.
+
+    Returns:
+        ``<hh:borderFill>...</hh:borderFill>`` 문자열 (네임스페이스 prefix 포함).
+    """
+    if isinstance(border_color, tuple):
+        border_color = rgb_to_hex(*border_color)
+    if border_color is None:
+        border_color = DEFAULT_BORDER_COLOR
+
+    sides = {}
+    for name, raw in (("left", left), ("right", right),
+                      ("top", top), ("bottom", bottom)):
+        btype, bwidth, bcolor = _border_spec(raw)
+        if isinstance(raw, tuple) and len(raw) == 3:
+            color = bcolor
+        else:
+            color = border_color if btype != "NONE" else DEFAULT_BORDER_COLOR
+        sides[name] = (btype, bwidth, color)
+
+    parts = [
+        f'<hh:borderFill id="{border_id}" threeD="0" shadow="0"'
+        ' centerLine="NONE" breakCellSeparateLine="0">',
+        '<hh:slash type="NONE" Crooked="0" isCounter="0"/>',
+        '<hh:backSlash type="NONE" Crooked="0" isCounter="0"/>',
+    ]
+    for name in ("left", "right", "top", "bottom"):
+        btype, bwidth, bcolor = sides[name]
+        parts.append(
+            f'<hh:{name}Border type="{btype}" width="{bwidth}" color="{bcolor}"/>'
+        )
+    parts.append('<hh:diagonal type="SOLID" width="0.1 mm" color="#000000"/>')
+
+    if bg_rgb is not None:
+        if isinstance(bg_rgb, tuple):
+            bg_hex = rgb_to_hex(*bg_rgb)
+        else:
+            bg_hex = bg_rgb
+        parts.append(
+            '<hc:fillBrush>'
+            f'<hc:winBrush faceColor="{bg_hex}" hatchColor="#000000" alpha="0"/>'
+            '</hc:fillBrush>'
+        )
+    parts.append('</hh:borderFill>')
+    return "".join(parts)
+
+
+# --- charPr 미세 변형 (장평·자간·진하게·기울임·글자색) ---------------
+#
+# HWPX charPr 의 핵심 자식 요소:
+#   <hh:ratio   hangul="100" ...>   # 장평 (가로 배율 %, woo773 `장평`)
+#   <hh:spacing hangul="0"   ...>   # 자간 (% — 음수 = 좁게, woo773 `자간`)
+#   <hh:bold/>                       # 진하게 (요소 존재 = 활성)
+#   <hh:italic/>                     # 기울임
+#   <hh:underline type="SOLID"/>     # 밑줄 (type 이 NONE 외이면 활성)
+#   textColor 속성                   # 글자색
+#
+# 같은 base_id 에서 동일 변형이면 같은 새 id 를 재사용한다 (dedup).
+
+
+def charpr_variant_signature(base_id, *, width=None, letter_spacing=None,
+                             bold=None, italic=None, underline=None,
+                             text_color=None):
+    """charPr 변형 dedup 키. ``HwpxModifier._register_charpr_variant`` 가 사용."""
+    if isinstance(text_color, tuple):
+        text_color = rgb_to_hex(*text_color)
+    return (str(base_id), width, letter_spacing, bold, italic, underline, text_color)
+
+
+def apply_charpr_variant(charpr_elem, *, width=None, letter_spacing=None,
+                         bold=None, italic=None, underline=None, text_color=None):
+    """주어진 ``<hh:charPr>`` 요소(deepcopy 본)에 변형을 in-place 적용한다.
+
+    None 으로 둔 인자는 원본 값을 유지한다.
+
+    Args:
+        charpr_elem: lxml 의 ``<hh:charPr>`` 요소 (이미 복제된 사본)
+        width: 장평. 50~200 범위의 백분율 정수. (woo773 `장평(95)` 와 동일)
+        letter_spacing: 자간. -50 ~ 50 범위의 백분율 정수.
+            (woo773 `자간(-12)` → letter_spacing=-12)
+        bold: True/False/None. None 이면 변경 없음.
+        italic: True/False/None.
+        underline: True/False/None. True 면 SOLID 밑줄.
+        text_color: ``(r,g,b)`` 또는 ``"#RRGGBB"``. None 이면 변경 없음.
+    """
+    HH = "{http://www.hancom.co.kr/hwpml/2011/head}"
+    LANGS = ("hangul", "latin", "hanja", "japanese", "other", "symbol", "user")
+
+    if width is not None:
+        ratio = charpr_elem.find(f"{HH}ratio")
+        if ratio is not None:
+            for lang in LANGS:
+                ratio.set(lang, str(width))
+
+    if letter_spacing is not None:
+        spacing = charpr_elem.find(f"{HH}spacing")
+        if spacing is not None:
+            for lang in LANGS:
+                spacing.set(lang, str(letter_spacing))
+
+    if bold is not None:
+        bold_el = charpr_elem.find(f"{HH}bold")
+        if bold and bold_el is None:
+            from lxml import etree as _et
+            _et.SubElement(charpr_elem, f"{HH}bold")
+        elif (not bold) and bold_el is not None:
+            charpr_elem.remove(bold_el)
+
+    if italic is not None:
+        italic_el = charpr_elem.find(f"{HH}italic")
+        if italic and italic_el is None:
+            from lxml import etree as _et
+            _et.SubElement(charpr_elem, f"{HH}italic")
+        elif (not italic) and italic_el is not None:
+            charpr_elem.remove(italic_el)
+
+    if underline is not None:
+        un_el = charpr_elem.find(f"{HH}underline")
+        if un_el is not None:
+            un_el.set("type", "SOLID" if underline else "NONE")
+
+    if text_color is not None:
+        if isinstance(text_color, tuple):
+            text_color = rgb_to_hex(*text_color)
+        charpr_elem.set("textColor", text_color)
+
+
+def border_fill_signature(
+    *,
+    left=None, right=None, top=None, bottom=None,
+    border_color=None,
+    bg_rgb=None,
+):
+    """동일 borderFill 재사용을 위한 hashable 키.
+
+    `_register_border_fill` 의 dedup 캐시 키로 사용. 같은 시각 속성이면 같은 id 를
+    공유하도록 한다.
+    """
+    if isinstance(border_color, tuple):
+        border_color = rgb_to_hex(*border_color)
+    if isinstance(bg_rgb, tuple):
+        bg_rgb = rgb_to_hex(*bg_rgb)
+    return (
+        _border_spec(left),
+        _border_spec(right),
+        _border_spec(top),
+        _border_spec(bottom),
+        border_color,
+        bg_rgb,
+    )

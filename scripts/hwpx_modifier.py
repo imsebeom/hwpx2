@@ -453,6 +453,413 @@ class HwpxModifier:
                     modified += 1
         return modified
 
+    # ── 셀 시맨틱 편집 (woo773/hangle 어휘에서 차용) ──────────────
+    #
+    # 모든 셀 메서드는 (table_index, row, col) 좌표를 받는다.
+    # row/col 은 ``<hp:cellAddr>`` 의 rowAddr/colAddr 기반(0-base)이며
+    # 병합된 셀은 그 시작 좌표 한 점만 가진다.
+
+    def _get_table(self, table_index: int) -> Optional[etree._Element]:
+        tables = self.section_tree.findall(f'.//{{{self.HP}}}tbl')
+        if 0 <= table_index < len(tables):
+            return tables[table_index]
+        return None
+
+    def _iter_cells(self, table):
+        """``<hp:tc>`` 와 (rowAddr, colAddr, rowSpan, colSpan) 을 차례로 yield."""
+        for tr in table.findall(f'{{{self.HP}}}tr'):
+            for tc in tr.findall(f'{{{self.HP}}}tc'):
+                addr = tc.find(f'{{{self.HP}}}cellAddr')
+                span = tc.find(f'{{{self.HP}}}cellSpan')
+                r = int(addr.get('rowAddr')) if addr is not None else -1
+                c = int(addr.get('colAddr')) if addr is not None else -1
+                rs = int(span.get('rowSpan')) if span is not None else 1
+                cs = int(span.get('colSpan')) if span is not None else 1
+                yield tr, tc, r, c, rs, cs
+
+    def _get_cell(self, table_index: int, row: int, col: int):
+        """좌표 (row, col) 의 셀을 찾는다. 병합 영역 안에 들어가면 그 anchor 셀 반환."""
+        table = self._get_table(table_index)
+        if table is None:
+            return None
+        for tr, tc, r, c, rs, cs in self._iter_cells(table):
+            if r <= row < r + rs and c <= col < c + cs:
+                return tc
+        return None
+
+    def _get_max_borderfill_id(self) -> int:
+        if self.header_tree is None:
+            return 0
+        max_id = 0
+        for bf in self.header_tree.iter(f'{{{self.HH}}}borderFill'):
+            try:
+                bid = int(bf.get('id', '0'))
+                if bid > max_id:
+                    max_id = bid
+            except ValueError:
+                pass
+        return max_id
+
+    def _register_border_fill(self, *, left=None, right=None, top=None, bottom=None,
+                              border_color=None, bg_rgb=None) -> str:
+        """header.xml 의 borderFill 풀에 새 항목을 등록하고 id 를 반환한다.
+
+        같은 시각 속성이면 기존 borderFill 을 재사용한다(시그니처 dedup). header 가
+        수정되면 ``_header_modified`` 가 True 로 설정되어 save() 에서 함께 기록된다.
+        """
+        if self.header_tree is None:
+            raise RuntimeError("header.xml 이 없어 borderFill 을 등록할 수 없습니다")
+
+        from hwpx_helpers import (
+            build_border_fill_xml, border_fill_signature,
+        )
+        cache = getattr(self, '_borderfill_cache', None)
+        if cache is None:
+            cache = {}
+            self._borderfill_cache = cache
+
+        sig = border_fill_signature(
+            left=left, right=right, top=top, bottom=bottom,
+            border_color=border_color, bg_rgb=bg_rgb,
+        )
+        if sig in cache:
+            return cache[sig]
+
+        new_id = self._get_max_borderfill_id() + 1
+        xml = build_border_fill_xml(
+            new_id, left=left, right=right, top=top, bottom=bottom,
+            border_color=border_color, bg_rgb=bg_rgb,
+        )
+        # NS_DECL 가 필요하지만 header_tree 에 이미 hh/hc 가 선언돼 있으므로
+        # fromstring 시 명시 prefix 만 풀어 주면 된다.
+        new_bf = etree.fromstring(
+            f'<root xmlns:hh="{self.HH}" xmlns:hc="{self.HC}">{xml}</root>'
+        )[0]
+
+        # borderFill 컨테이너에 append (실측: <hh:borderFills itemCnt="N">)
+        for elem in self.header_tree.iter():
+            if elem.tag.split('}')[-1] in ('borderFills', 'borderFillList'):
+                elem.append(new_bf)
+                cnt_attr = 'itemCnt' if elem.get('itemCnt') is not None else 'count'
+                elem.set(cnt_attr, str(int(elem.get(cnt_attr, '0')) + 1))
+                break
+        else:
+            raise RuntimeError("header.xml 에서 borderFills 컨테이너를 찾을 수 없습니다")
+
+        self._header_modified = True
+        cache[sig] = str(new_id)
+        return str(new_id)
+
+    def _get_cell_borderfill_props(self, tc) -> Dict[str, Any]:
+        """셀이 현재 참조하는 borderFill 의 4면 + 색 + 배경을 dict 로 추출."""
+        if self.header_tree is None:
+            return {}
+        bf_id = tc.get('borderFillIDRef')
+        if bf_id is None:
+            return {}
+        for bf in self.header_tree.iter(f'{{{self.HH}}}borderFill'):
+            if bf.get('id') != bf_id:
+                continue
+            props: Dict[str, Any] = {}
+            for side in ('left', 'right', 'top', 'bottom'):
+                el = bf.find(f'{{{self.HH}}}{side}Border')
+                if el is not None:
+                    props[side] = (el.get('type'), el.get('width'),
+                                   el.get('color'))
+                else:
+                    props[side] = None
+            wb = bf.find(f'.//{{{self.HC}}}winBrush')
+            if wb is not None and (wb.get('faceColor') or '').lower() != 'none':
+                props['bg'] = wb.get('faceColor')
+            else:
+                props['bg'] = None
+            return props
+        return {}
+
+    def set_cell_bg(self, table_index: int, row: int, col: int,
+                    r: int, g: int, b: int) -> bool:
+        """셀의 배경을 RGB 색으로 설정. 기존 테두리는 유지."""
+        tc = self._get_cell(table_index, row, col)
+        if tc is None:
+            return False
+        cur = self._get_cell_borderfill_props(tc)
+        new_id = self._register_border_fill(
+            left=cur.get('left'), right=cur.get('right'),
+            top=cur.get('top'), bottom=cur.get('bottom'),
+            bg_rgb=(r, g, b),
+        )
+        tc.set('borderFillIDRef', new_id)
+        return True
+
+    # style → (HWPX type, default width mm) 매핑.
+    # 'thick' 은 별도 type 이 아니라 SOLID + 0.4mm 의 조합이다.
+    _BORDER_STYLE_MAP = {
+        'none':   ('NONE',        0.1),
+        'solid':  ('SOLID',       0.12),
+        'thick':  ('SOLID',       0.4),    # 굵은 실선
+        'dotted': ('DOT',         0.12),
+        'dashed': ('DASH',        0.12),
+        'double': ('DOUBLE_SLIM', 0.4),
+    }
+
+    def set_cell_border(self, table_index: int, row: int, col: int,
+                        side: str, style: str = 'solid',
+                        color=None, width_mm: Optional[float] = None) -> bool:
+        """셀의 한 면 테두리를 변경.
+
+        Args:
+            side: 'top'/'bottom'/'left'/'right' 또는 'all'
+            style: 'none'/'solid'/'thick'/'dotted'/'dashed'/'double'
+            color: ``(r,g,b)`` 또는 ``"#RRGGBB"``. None 이면 검정.
+            width_mm: 사용자 지정 두께(mm). None 이면 ``style`` 기본값 사용.
+                예: ``style='solid', width_mm=1.0`` → 1mm 굵은 실선.
+        """
+        tc = self._get_cell(table_index, row, col)
+        if tc is None:
+            return False
+        cur = self._get_cell_borderfill_props(tc)
+
+        key = style.lower()
+        if key not in self._BORDER_STYLE_MAP:
+            raise ValueError(f"Unknown border style: {style!r}")
+        btype, default_w = self._BORDER_STYLE_MAP[key]
+        w = width_mm if width_mm is not None else default_w
+        bcolor = _color_to_hex(color) if color else '#000000'
+        spec = (btype, f'{w:g} mm', bcolor)
+
+        sides = {k: cur.get(k) for k in ('left', 'right', 'top', 'bottom')}
+        targets = ['left', 'right', 'top', 'bottom'] if side == 'all' else [side]
+        for s in targets:
+            sides[s] = spec
+        new_id = self._register_border_fill(
+            left=sides['left'], right=sides['right'],
+            top=sides['top'], bottom=sides['bottom'],
+            bg_rgb=cur.get('bg'),
+        )
+        tc.set('borderFillIDRef', new_id)
+        return True
+
+    def set_cell_size(self, table_index: int, row: int, col: int,
+                      width_mm: Optional[float] = None,
+                      height_mm: Optional[float] = None) -> bool:
+        """셀의 폭/높이를 mm 단위로 설정. width 만 또는 height 만 지정 가능.
+
+        주의: HWPX 표는 모든 행에서 열 너비가 일관되어야 한다. 한 셀의 width 만
+        바꾸면 표 전체가 깨질 수 있으므로 보통 ``set_table_column_width`` 같은
+        고수준 헬퍼를 권장. 본 메서드는 단일 셀의 ``cellSz`` 만 수정한다.
+        """
+        from hwpx_helpers import mm_to_hwpunit
+        tc = self._get_cell(table_index, row, col)
+        if tc is None:
+            return False
+        sz = tc.find(f'{{{self.HP}}}cellSz')
+        if sz is None:
+            sz = etree.SubElement(tc, f'{{{self.HP}}}cellSz')
+        if width_mm is not None:
+            sz.set('width', str(mm_to_hwpunit(width_mm)))
+        if height_mm is not None:
+            sz.set('height', str(mm_to_hwpunit(height_mm)))
+        return True
+
+    def set_cell_inner_margin(self, table_index: int, row: int, col: int,
+                              top_mm: float = 0.4, bottom_mm: float = 0.4,
+                              left_mm: float = 0.4, right_mm: float = 0.4
+                              ) -> bool:
+        """셀 안쪽 여백을 mm 단위로 설정 (woo773 ``안쪽여백``)."""
+        from hwpx_helpers import mm_to_hwpunit
+        tc = self._get_cell(table_index, row, col)
+        if tc is None:
+            return False
+        cm = tc.find(f'{{{self.HP}}}cellMargin')
+        if cm is None:
+            cm = etree.SubElement(tc, f'{{{self.HP}}}cellMargin')
+        cm.set('left',   str(mm_to_hwpunit(left_mm)))
+        cm.set('right',  str(mm_to_hwpunit(right_mm)))
+        cm.set('top',    str(mm_to_hwpunit(top_mm)))
+        cm.set('bottom', str(mm_to_hwpunit(bottom_mm)))
+        tc.set('hasMargin', '1')
+        return True
+
+    def set_table_border_color(self, table_index: int, r: int, g: int, b: int
+                               ) -> bool:
+        """표 안 모든 셀의 SOLID 테두리 색상을 일괄 변경 (woo773 ``테두리색``).
+
+        각 셀의 현재 borderFill 을 새 색상으로 복제한 borderFill 로 교체한다.
+        NONE 면(투명)은 색상이 영향을 주지 않으므로 그대로 둔다.
+        """
+        table = self._get_table(table_index)
+        if table is None:
+            return False
+        new_color = _color_to_hex((r, g, b))
+        for _, tc, _, _, _, _ in self._iter_cells(table):
+            cur = self._get_cell_borderfill_props(tc)
+            sides = {}
+            for k in ('left', 'right', 'top', 'bottom'):
+                v = cur.get(k)
+                if v is None or v[0] == 'NONE':
+                    sides[k] = v
+                else:
+                    sides[k] = (v[0], v[1], new_color)
+            new_id = self._register_border_fill(
+                left=sides['left'], right=sides['right'],
+                top=sides['top'], bottom=sides['bottom'],
+                bg_rgb=cur.get('bg'),
+            )
+            tc.set('borderFillIDRef', new_id)
+        return True
+
+    # ── charPr 변형 등록 (장평·자간·진하게·기울임·글자색) ───────────
+
+    def _get_max_charpr_id(self) -> int:
+        if self.header_tree is None:
+            return 0
+        max_id = 0
+        for cp in self.header_tree.iter(f'{{{self.HH}}}charPr'):
+            try:
+                cid = int(cp.get('id', '0'))
+                if cid > max_id:
+                    max_id = cid
+            except ValueError:
+                pass
+        return max_id
+
+    def _register_charpr_variant(self, base_id: str, **kwargs) -> str:
+        """기존 charPr 을 복제·변형해 header.xml 에 등록하고 새 id 반환.
+
+        kwargs: width, letter_spacing, bold, italic, underline, text_color.
+        같은 (base_id, kwargs) 조합이면 캐시된 id 재사용.
+        """
+        if self.header_tree is None:
+            raise RuntimeError("header.xml 이 없어 charPr 을 등록할 수 없습니다")
+
+        from hwpx_helpers import (
+            apply_charpr_variant, charpr_variant_signature,
+        )
+        cache = getattr(self, '_charpr_cache', None)
+        if cache is None:
+            cache = {}
+            self._charpr_cache = cache
+
+        sig = charpr_variant_signature(base_id, **kwargs)
+        if sig in cache:
+            return cache[sig]
+
+        # 원본 charPr 찾기
+        base = None
+        for cp in self.header_tree.iter(f'{{{self.HH}}}charPr'):
+            if cp.get('id') == str(base_id):
+                base = cp
+                break
+        if base is None:
+            raise RuntimeError(f"charPr id={base_id} 를 찾을 수 없습니다")
+
+        new_id = self._get_max_charpr_id() + 1
+        new_cp = deepcopy(base)
+        new_cp.set('id', str(new_id))
+        apply_charpr_variant(new_cp, **kwargs)
+
+        # charPr 컨테이너에 append (실측: <hh:charProperties itemCnt="N">)
+        for elem in self.header_tree.iter():
+            tag = elem.tag.split('}')[-1]
+            if tag in ('charProperties', 'charPrs', 'charPrList'):
+                elem.append(new_cp)
+                cnt_attr = 'itemCnt' if elem.get('itemCnt') is not None else 'count'
+                elem.set(cnt_attr, str(int(elem.get(cnt_attr, '0')) + 1))
+                break
+        else:
+            raise RuntimeError("header.xml 에서 charProperties 컨테이너를 찾을 수 없습니다")
+
+        self._header_modified = True
+        cache[sig] = str(new_id)
+        return str(new_id)
+
+    def apply_run_charpr_variant(self, table_index: int, row: int, col: int,
+                                 **kwargs) -> bool:
+        """셀 안의 모든 ``<hp:run>`` 의 charPrIDRef 를 새 변형 charPr 로 교체.
+
+        kwargs: width, letter_spacing, bold, italic, underline, text_color.
+        각 run 의 기존 charPrIDRef 를 base 로 삼아 변형 charPr 을 등록한다.
+        """
+        tc = self._get_cell(table_index, row, col)
+        if tc is None:
+            return False
+        runs = list(tc.iter(f'{{{self.HP}}}run'))
+        for run in runs:
+            base = run.get('charPrIDRef', '0')
+            new_id = self._register_charpr_variant(base, **kwargs)
+            run.set('charPrIDRef', new_id)
+        return bool(runs)
+
+    def table_cursor(self, table_index: int = 0) -> 'TableCursor':
+        """표 ``table_index`` 에 대한 :class:`TableCursor` 를 반환.
+
+        메서드 체이닝으로 셀 편집 시퀀스를 짧게 표현하는 데 사용.
+        ``at(r,c).bg(...).border(...).text(...)`` 처럼 호출.
+        """
+        return TableCursor(self, table_index)
+
+    def merge_cells(self, table_index: int, row: int, col: int,
+                    rowspan: int = 1, colspan: int = 1) -> bool:
+        """``(row,col)`` 부터 ``rowspan × colspan`` 영역을 하나로 병합.
+
+        anchor 셀(rowspan 1, colspan 1 외 첫 셀)은 ``cellSpan`` 이 갱신되고
+        ``cellSz.width`` 가 가려진 셀들의 width 합으로, height 는 가려진 행들의
+        height 합으로 늘어난다. 가려지는 셀들은 DOM 에서 제거된다.
+        """
+        if rowspan < 1 or colspan < 1 or (rowspan == 1 and colspan == 1):
+            return False
+        table = self._get_table(table_index)
+        if table is None:
+            return False
+
+        cells_to_remove = []
+        anchor = None
+        total_w = 0
+        col_widths_by_row = {}  # row → sum of widths in that row across span
+        row_heights = {}        # row → height (anchor row width-sum used to determine)
+
+        for tr, tc, r, c, rs, cs in self._iter_cells(table):
+            if r < row or r >= row + rowspan:
+                continue
+            if c < col or c >= col + colspan:
+                continue
+            sz = tc.find(f'{{{self.HP}}}cellSz')
+            w = int(sz.get('width', '0')) if sz is not None else 0
+            h = int(sz.get('height', '0')) if sz is not None else 0
+            col_widths_by_row.setdefault(r, 0)
+            col_widths_by_row[r] += w
+            row_heights.setdefault(r, h)
+            if r == row and c == col:
+                anchor = tc
+            else:
+                cells_to_remove.append((tr, tc))
+
+        if anchor is None:
+            return False
+
+        # anchor 의 cellSpan 갱신
+        span = anchor.find(f'{{{self.HP}}}cellSpan')
+        if span is None:
+            span = etree.SubElement(anchor, f'{{{self.HP}}}cellSpan')
+        span.set('colSpan', str(colspan))
+        span.set('rowSpan', str(rowspan))
+
+        # anchor 의 cellSz 갱신: width 는 anchor 행의 합, height 는 모든 행 합
+        if rowspan > 0:
+            total_w = col_widths_by_row.get(row, 0)
+        total_h = sum(row_heights.values())
+        sz = anchor.find(f'{{{self.HP}}}cellSz')
+        if sz is None:
+            sz = etree.SubElement(anchor, f'{{{self.HP}}}cellSz')
+        if total_w:
+            sz.set('width', str(total_w))
+        if total_h:
+            sz.set('height', str(total_h))
+
+        for tr, tc in cells_to_remove:
+            tr.remove(tc)
+        return True
+
     def save(self, output_path: str) -> str:
         """
         수정된 HWPX 파일 저장
@@ -560,6 +967,151 @@ def modify_hwpx_template(
             print(f"'{old_text}' → {count}개 치환됨")
     
     return output_path
+
+
+class TableCursor:
+    """표 셀에 대한 stateful 커서. 메서드 체이닝으로 셀 편집·이동을 표현한다.
+
+    woo773/hangle 의 ``셀선택→셀확장→셀병합→셀배경색→텍스트삽입`` 시퀀스를
+    한 줄로 옮기기 위한 추상화::
+
+        cur = doc.table_cursor(0)
+        cur.at(0, 0).bg(218,229,243).text("단원").right()
+        cur.at(1, 2).merge(rowspan=2, colspan=2).text("200")
+        cur.at(3, 0).size(height_mm=20).text("C")
+
+    모든 편집 메서드는 ``self`` 를 반환해 체이닝 가능. ``at(r,c)``/``right(n)``/
+    ``down(n)`` 등 이동 메서드도 동일.
+    """
+
+    def __init__(self, modifier: 'HwpxModifier', table_index: int = 0):
+        self.doc = modifier
+        self.table_index = table_index
+        self.row = 0
+        self.col = 0
+
+    # ── 이동 ──
+    def at(self, row: int, col: int) -> 'TableCursor':
+        self.row, self.col = row, col
+        return self
+
+    def right(self, n: int = 1) -> 'TableCursor':
+        self.col += n
+        return self
+
+    def left(self, n: int = 1) -> 'TableCursor':
+        self.col -= n
+        return self
+
+    def down(self, n: int = 1) -> 'TableCursor':
+        self.row += n
+        return self
+
+    def up(self, n: int = 1) -> 'TableCursor':
+        self.row -= n
+        return self
+
+    # ── 편집 (HwpxModifier 의 좌표 기반 메서드를 thin wrap) ──
+    def bg(self, r: int, g: int, b: int) -> 'TableCursor':
+        self.doc.set_cell_bg(self.table_index, self.row, self.col, r, g, b)
+        return self
+
+    def border(self, side: str = 'all', style: str = 'solid',
+               color=None, width_mm: Optional[float] = None) -> 'TableCursor':
+        self.doc.set_cell_border(self.table_index, self.row, self.col,
+                                 side, style, color=color, width_mm=width_mm)
+        return self
+
+    def size(self, width_mm: Optional[float] = None,
+             height_mm: Optional[float] = None) -> 'TableCursor':
+        self.doc.set_cell_size(self.table_index, self.row, self.col,
+                               width_mm=width_mm, height_mm=height_mm)
+        return self
+
+    def inner_margin(self, top_mm: float = 0.4, bottom_mm: float = 0.4,
+                     left_mm: float = 0.4, right_mm: float = 0.4
+                     ) -> 'TableCursor':
+        self.doc.set_cell_inner_margin(self.table_index, self.row, self.col,
+                                       top_mm, bottom_mm, left_mm, right_mm)
+        return self
+
+    def merge(self, rowspan: int = 1, colspan: int = 1) -> 'TableCursor':
+        """현재 위치에서 ``rowspan × colspan`` 영역을 병합."""
+        self.doc.merge_cells(self.table_index, self.row, self.col,
+                             rowspan=rowspan, colspan=colspan)
+        return self
+
+    # ── 폰트 변형 (셀 안 모든 run 의 charPr 을 새 변형으로 교체) ──
+    def bold(self, on: bool = True) -> 'TableCursor':
+        """진하게 (woo773 ``진하게``)."""
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, bold=on)
+        return self
+
+    def italic(self, on: bool = True) -> 'TableCursor':
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, italic=on)
+        return self
+
+    def underline(self, on: bool = True) -> 'TableCursor':
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, underline=on)
+        return self
+
+    def width(self, percent: int) -> 'TableCursor':
+        """장평 (가로 배율 %, woo773 ``장평(95)``)."""
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, width=percent)
+        return self
+
+    def letter_spacing(self, percent: int) -> 'TableCursor':
+        """자간 (% — 음수=좁게, woo773 ``자간(-12)``)."""
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, letter_spacing=percent)
+        return self
+
+    def text_color(self, color) -> 'TableCursor':
+        """글자색. ``(r,g,b)`` 또는 ``"#RRGGBB"``."""
+        self.doc.apply_run_charpr_variant(
+            self.table_index, self.row, self.col, text_color=color)
+        return self
+
+    def text(self, s: str) -> 'TableCursor':
+        """셀의 첫 ``<hp:p>`` 첫 ``<hp:run>`` 첫 ``<hp:t>`` 텍스트를 교체.
+
+        텍스트 노드가 없으면 새로 만들어 추가한다. 다중 문단은 미지원.
+        """
+        tc = self.doc._get_cell(self.table_index, self.row, self.col)
+        if tc is None:
+            return self
+        HP = self.doc.HP
+        # 첫 <hp:t> 찾기
+        t = tc.find(f'.//{{{HP}}}t')
+        if t is not None:
+            t.text = s
+            return self
+        # 없으면 가장 단순한 구조로 추가: 첫 p/run 에 <hp:t> 삽입
+        run = tc.find(f'.//{{{HP}}}run')
+        if run is None:
+            p = tc.find(f'.//{{{HP}}}p')
+            if p is None:
+                return self
+            run = etree.SubElement(p, f'{{{HP}}}run', charPrIDRef='0')
+        new_t = etree.SubElement(run, f'{{{HP}}}t')
+        new_t.text = s
+        return self
+
+
+def _color_to_hex(color):
+    """``(r,g,b)`` 튜플 또는 ``"#RRGGBB"`` 문자열을 정규화."""
+    if color is None:
+        return '#000000'
+    if isinstance(color, str):
+        return color if color.startswith('#') else '#' + color
+    if isinstance(color, tuple) and len(color) == 3:
+        from hwpx_helpers import rgb_to_hex
+        return rgb_to_hex(*color)
+    raise ValueError(f"Invalid color: {color!r}")
 
 
 def analyze_hwpx_template(template_path: str, max_items: int = 100) -> str:
