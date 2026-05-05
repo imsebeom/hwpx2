@@ -1,1 +1,4 @@
 __pycache__/
+.hwp2hwpx-repo/
+*.bak_*
+*.bak

@@ -28,6 +28,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── hwpx_form_filler.py    # ★ 양식 부분 추출/표 조작 (Workflow H)
 │   ├── hwpx_writer.py         # 줄간격 XML 생성 유틸리티
 │   ├── exam_builder.py          # ★ 시험 문제지 생성 (Workflow J)
+│   ├── convert_hwp.py           # HWP(바이너리) → HWPX 변환 (Workflow K, jkf87 포팅)
 │   └── office/{unpack,pack}.py
 ├── templates/
 │   ├── base/                  # 베이스 Skeleton
@@ -44,9 +45,11 @@ ${CLAUDE_SKILL_DIR}/
     ├── template-styles.md     # 템플릿별 스타일 ID 맵
     ├── troubleshooting.md     # 트러블슈팅
     ├── report-style.md        # 보고서 양식 상세
-    ├── official-doc-style.md  # 공문서 양식 상세
+    ├── official-doc-style.md  # 공문서 양식 상세 (서식 위주)
+    ├── gonmunseo-2025-writing-rules.md  # ★ 2025-01-08 개정 행정업무규정 룰셋 (수신·항목기호 등, jkf87 차용)
     ├── xml-internals.md       # 저수준 XML 구조
-    └── rhwp-benchmark.md      # rhwp 포팅 배경·표 수식·필드 API 사용법
+    ├── rhwp-benchmark.md      # rhwp 포팅 배경·표 수식·필드 API 사용법
+    └── python-hwpx-api.md     # python-hwpx 라이브러리 API 시그니처 + 1.9 ↔ 2.x 마이그레이션
 ```
 
 ## rhwp 포팅 요약 (2026-04-18)
@@ -88,6 +91,10 @@ pip install python-hwpx lxml --break-system-packages
  ├─ "붙임 추출/표 행 추가/셀 채우기" → 워크플로우 H (표 조작)
  ├─ "여러 HWPX를 하나로 합쳐줘" → 워크플로우 I (병합)
  ├─ "시험 문제지/PDF 시험지 → HWPX" → 워크플로우 J (시험 문제지)
+ ├─ ".hwp(바이너리) → HWPX 변환" → 워크플로우 K (HWP→HWPX 순수 Python)
+ ├─ "{학교명}/{담당자} 일괄 치환 (양식 표 셀 포함)" → 워크플로우 L (zip-level 전역 치환)
+ ├─ "빨간 글씨 일괄 검정으로/스타일별 부분 치환" → 워크플로우 M (스타일 필터 치환)
+ ├─ "학생 작품 첨삭 메모 자동 삽입" → 워크플로우 N (자동 첨삭 메모)
  └─ "HWPX 읽어줘" → 워크플로우 E (읽기/추출)
 ```
 
@@ -1027,6 +1034,272 @@ xml = build_section_xml(data)
 
 ---
 
+## 워크플로우 K: HWP(바이너리) → HWPX 변환
+
+> **레거시 .hwp 바이너리 파일을 .hwpx 개방형 XML로 변환.**
+> jkf87/hwp2hwpx-python-refactor 래퍼. 한컴오피스/LibreOffice 미설치 환경(서버·리눅스)에서 유일한 순수 Python 경로.
+
+### 언제 사용
+
+- 사용자가 `.hwp` (바이너리) 파일을 주고 "이걸로 작업" 또는 "HWPX로 바꿔줘" 라고 할 때
+- 한컴오피스 COM·LibreOffice headless 모두 쓸 수 없는 환경
+- 한글 미설치 서버 자동화 파이프라인
+
+### 한계 ⚠️ 중요
+
+2026-05-04 5MB 정부 보고서 24페이지 변환 실측 결과:
+- **표 셀 텍스트 통째 누락** — 표 외곽선만 남고 내부 콘텐츠가 사라짐. 목차·예산표 등 셀 기반 페이지가 빈 표로 변환됨
+- **이미지·캘리그래피 손실** — 일부 이미지는 누락, 일부는 다른 placeholder로 대체. 캘리그래피 효과(외곽선·그림자) 미보존
+- **자간·장평 서식 흐트러짐** — `서 울 특 별 시 교 육 청` 처럼 자간이 임의로 늘어남
+- PDF 크기 비교: 원본 5.0MB → 변환 0.86MB (≈83% 콘텐츠 손실)
+- `verify_hwpx.py` 는 구조만 체크하므로 통과해도 **시각 렌더링은 깨질 수 있음**. 반드시 PDF 변환 후 육안 비교 필요
+
+**권장 사용 범위**: 단순 텍스트 위주의 짧은 .hwp (질문지·메모·간단한 공문 본문). 표·이미지·서식이 풍부한 보고서에는 사용 부적합 — 한컴/LibreOffice 가 가능하면 그쪽 우선.
+
+### 기타
+- 처음 호출 시 `pyhwp5/olefile/lxml` + `hwp2hwpx-python-refactor` 자동 설치/클론 (네트워크 필요)
+
+### CLI 사용법
+
+```bash
+# 기본 변환 (입력 .hwp 옆에 동일명 .hwpx 생성)
+python3 "${CLAUDE_SKILL_DIR}/scripts/convert_hwp.py" input.hwp
+
+# 출력 경로 지정
+python3 "${CLAUDE_SKILL_DIR}/scripts/convert_hwp.py" input.hwp -o out.hwpx
+
+# 메타데이터만 조회 (변환 X)
+python3 "${CLAUDE_SKILL_DIR}/scripts/convert_hwp.py" input.hwp --info --json
+```
+
+### Python API
+
+```python
+import sys, os
+sys.path.insert(0, os.path.expanduser("~/.claude/skills/hwpx/scripts"))
+from convert_hwp import convert, info
+
+out = convert("input.hwp", "out.hwpx")
+meta = info("input.hwp")  # title, author, version, section_count, embedded_bindata_count
+```
+
+### 변환 후 권장 후처리
+
+```bash
+# 1) 네임스페이스 정합 (한글 Viewer 호환)
+python3 "${CLAUDE_SKILL_DIR}/scripts/fix_namespaces.py" out.hwpx
+
+# 2) 구조 검증 + polaris-dvc strict 검증
+python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" --result out.hwpx --strict
+```
+
+### 출처
+
+[jkf87/hwpx-skill](https://github.com/jkf87/hwpx-skill) Workflow H (2026-04-02) 차용. 변환 엔진은 [jkf87/hwp2hwpx-python-refactor](https://github.com/jkf87/hwp2hwpx-python-refactor).
+
+---
+
+## 워크플로우 L: ZIP-level 전역 텍스트 치환
+
+> **양식 hwpx 의 본문·표 셀에 흩어진 단순 플레이스홀더 (`{학교명}`, `{기관명}` 등)
+> 를 한 줄로 일괄 치환할 때 사용.** lxml 트리를 거치지 않아 가장 빠르고, 표 셀까지
+> 빠짐없이 잡는다.
+
+### 언제 워크플로우 B/G/H 가 아닌 L 을 쓰는가
+
+| 상황 | 권장 |
+|---|---|
+| 본문 + 표 셀의 **단순 텍스트 키** 일괄 치환 | **L** |
+| 본문 run 색상·밑줄 등 스타일 필터 함께 | B (`replace_text_in_runs`) |
+| 표 행 추가, 셀 병합, 부분 추출 | H (`HwpxFormFiller`) |
+| 문단 속성·정규식·인덱스 기반 구조 수정 | G (`HwpxModifier`) |
+
+### 사용
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/zip_replace_all.py" \
+    template.hwpx output.hwpx \
+    --replace "{학교명}=중대초등학교" "{담당자}=임세범" \
+    --auto-fix-ns
+```
+
+옵션:
+
+- `--inplace --backup` : 입력 파일 자체 덮어쓰기 + `.bak` 생성
+- `--auto-fix-ns` : 치환 직후 `fix_hwpx_namespaces` 자동 실행 (정규식 기반 ns 정리 + itemCnt 보정)
+- `--no-ensure-linesegs` : 더미 lineSegArray 주입 비활성화 (기본은 자동 주입)
+
+### 통합된 안전망
+
+치환과 동시에 `Contents/section*.xml` 의 빈 lineSegArray 에 대해 자동으로 더미를
+주입한다. 이 덕분에 외부 빌더로 만들어진 hwpx 도 본 워크플로 1회 실행만으로
+polaris-dvc strict (JID 11004) 통과 상태로 끌어올릴 수 있다 (실측: 사업계획서 185
+건, 학급독서통계 142 건 자동 보정 → 모두 0 건).
+
+### Python 함수 임포트
+
+```python
+from zip_replace_all import zip_replace_all
+
+stats = zip_replace_all(
+    "template.hwpx",
+    "output.hwpx",
+    {"{학교명}": "중대초등학교", "{담당자}": "임세범"},
+    ensure_linesegs=True,
+)
+print(stats)
+# {'parts': 11, 'xml_parts': 6, 'changed_xml': 1, 'replacements': 2,
+#  'decode_failed': 0, 'lineseg_injected': 0}
+```
+
+### 안전 가드
+
+- 입력=출력 경로면 자동으로 임시 파일 사용
+- `<`, `>`, `</` 가 포함된 치환 키는 경고 (XML 손상 가능)
+- `mimetype` 엔트리는 항상 `ZIP_STORED` 로 보존 (HWPX 스펙 요구)
+
+### 출처
+
+[airmang/hwpx-skill](https://github.com/airmang/hwpx-skill) (Apache-2.0, 2026-04-24)
+의 `scripts/zip_replace_all.py` 이식. lineSegArray 더미 주입 통합은 본 스킬 자체
+보강.
+
+---
+
+## 워크플로우 M: 스타일 필터 텍스트 치환
+
+> **글자 색·밑줄·charPrIDRef 같은 스타일 조건에 맞는 run 만 골라 치환.**
+> python-hwpx 2.x 의 `HwpxDocument.replace_text_in_runs()` 스타일 필터를 활용.
+
+### 언제 L 이 아닌 M 을 쓰는가
+
+- 본문에서 **빨간 글씨로 표시된 단어만** 골라 치환 (학생 작품 빨간 첨삭 처리)
+- **밑줄 친 단어만** 굵게 강조로 변경
+- 특정 charPrIDRef (제목 스타일·인용 스타일 등) 의 텍스트만 일괄 교정
+- 본문에 같은 단어가 여러 번 나오지만 **앞쪽 N개만** 치환 (`--limit`)
+
+### 사용
+
+```bash
+# 빨간 TODO → DONE
+python3 "${CLAUDE_SKILL_DIR}/scripts/style_filter_replace.py" \
+    student.hwpx graded.hwpx \
+    "TODO" "DONE" --color "#FF0000"
+
+# 매칭 사전 점검
+python3 "${CLAUDE_SKILL_DIR}/scripts/style_filter_replace.py" \
+    input.hwpx /dev/null \
+    "검토" "완료" --color "#FF0000" --underline SOLID --dry-run
+
+# 첫 1회만 치환 (limit)
+python3 "${CLAUDE_SKILL_DIR}/scripts/style_filter_replace.py" \
+    input.hwpx output.hwpx "학교명" "기관명" --limit 1
+```
+
+옵션:
+
+- `--color "#RRGGBB"` : 글자 색 필터
+- `--underline SOLID` : 밑줄 타입 (`SOLID/DOTTED/DASH/...`)
+- `--underline-color "#RRGGBB"` : 밑줄 색 필터
+- `--char-pr <id>` : charPrIDRef 직접 지정
+- `--limit N` : 최대 치환 횟수
+- `--dry-run` : 매칭 run 텍스트만 출력
+
+### Python 함수
+
+```python
+from style_filter_replace import style_replace, list_styled_runs
+
+# 매칭 run 미리보기
+matches = list_styled_runs("input.hwpx", text_color="#FF0000")
+print(matches)
+
+# 실제 치환
+n = style_replace(
+    "input.hwpx", "output.hwpx",
+    "TODO", "DONE",
+    text_color="#FF0000", underline_type="SOLID", limit=3,
+)
+print(f"{n}개 치환됨")
+```
+
+### 요구사항
+
+- python-hwpx >= 2.6 (HwpxDocument API)
+- 색상 필터는 입력 hwpx 의 charPr 정의에 textColor 가 명시돼 있어야 매칭됨
+
+---
+
+## 워크플로우 N: 자동 첨삭 메모 batch 삽입
+
+> **JSON 으로 메모 위치·본문·작성자 목록을 주면 한 번에 메모를 추가.**
+> 학생 작품 평가, 보고서 검토, 협업 코멘트 자동화에 사용.
+
+### 사용
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/add_review_memo.py" \
+    student.hwpx graded.hwpx \
+    --memos memos.json \
+    --default-author "임세범"
+```
+
+`memos.json` 스키마 (배열):
+
+```json
+[
+  {
+    "section": 0,
+    "paragraph": 3,
+    "text": "여기 보충 필요",
+    "author": "임세범"
+  },
+  {
+    "paragraph_text": "학습 목표:",
+    "text": "구체적 행동동사 사용 권장"
+  }
+]
+```
+
+위치 지정 두 가지:
+
+- `paragraph_text`: 해당 텍스트가 들어 있는 첫 paragraph 자동 매칭 (간편)
+- `section + paragraph` 인덱스: 정밀 지정 (0-based)
+
+`paragraph_text` 가 우선 적용되며, 둘 다 있으면 paragraph_text 우선.
+
+### Python 함수
+
+```python
+from add_review_memo import add_memos_batch
+
+added = add_memos_batch(
+    "student.hwpx", "graded.hwpx",
+    memos=[
+        {"section": 0, "paragraph": 0, "text": "잘 썼어요", "author": "교사"},
+        {"paragraph_text": "결론", "text": "근거 한 줄 더 필요"},
+    ],
+)
+print(f"{added}개 메모 추가됨")
+```
+
+### 안전망
+
+- 저장 직후 `inject_dummy_linesegs()` 자동 적용 → polaris-dvc strict (JID 11004) 통과
+- paragraph 인덱스 범위 밖이면 WARN 출력 후 skip (전체 실패 X)
+- text 누락된 메모 spec 도 WARN + skip
+
+### 요구사항
+
+- python-hwpx >= 2.6 (`add_memo_with_anchor` API)
+
+### 활용 예시
+
+수업 시나리오 — 학생 hwpx 작품 모음을 수합 → Claude 가 각 작품 분석 → 평가 코멘트
+JSON 생성 → `add_review_memo` batch 적용 → 첨삭본 일괄 배포.
+
+---
+
 ## 서브에이전트 검수 (★ 권장)
 
 > **문서 생성 후 별도 서브에이전트를 생성하여 품질 검증을 수행한다.**
@@ -1167,5 +1440,6 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 - **트러블슈팅**: [references/troubleshooting.md](references/troubleshooting.md)
 - **보고서 양식**: [references/report-style.md](references/report-style.md)
 - **공문서 양식**: [references/official-doc-style.md](references/official-doc-style.md)
+- **python-hwpx API**: [references/python-hwpx-api.md](references/python-hwpx-api.md) — 라이브러리 시그니처 + 1.9 ↔ 2.x 마이그레이션
 - **보고서 기호**: □(16pt) → ○(15pt) → ―(15pt) → ※(13pt)
 - **공문서 번호**: 1. → 가. → 1) → 가) → (1) → (가) → ① → ㉮

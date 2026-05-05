@@ -12,8 +12,9 @@ HWPX(한컴오피스 한글 개방형 문서) 생성, 편집, 병합을 위한 C
 | 기반 fork | [jkf87/hwpx-skill](https://github.com/jkf87/hwpx-skill) | 원본 라이선스 | 최초 기반. ZIP-level 치환 워크플로우, 템플릿 구조, 기본 빌드 패턴 |
 | 알고리즘 포팅 | [edwardkim/rhwp](https://github.com/edwardkim/rhwp) | MIT (© 2025-2026 Edward Kim) | 표 계산식 엔진, 네임스페이스 헬퍼, UTF-16 오프셋, zip bomb 방어, 필드 API 포팅 (2026-04-18) |
 | 외부 검증 도구 | [PolarisOffice/polaris_dvc](https://github.com/PolarisOffice/polaris_dvc) | Apache-2.0 | `bin/polaris-dvc.exe` (v0.1.0 prebuilt) — `verify_hwpx --strict` 의 JID 위반 검출 백엔드 (2026-04-26) |
+| 스크립트 이식 | [airmang/hwpx-skill](https://github.com/airmang/hwpx-skill) | Apache-2.0 (© 2026 airmang) | `scripts/zip_replace_all.py` ZIP-level 전역 치환 + temp 안전 처리 + `mimetype ZIP_STORED` 보존 (2026-05-05). lineSegArray 더미 주입은 자체 보강 |
 | 스펙 자료 | 한글과컴퓨터 HWP 파일 형식 공개 문서 | 공개 | HWPX XML 스키마 해석 기준 |
-| Python 라이브러리 | `lxml` / `python-hwpx` / `Pillow` | 각 라이브러리 라이선스 | XML 파싱·편집, HWPX 읽기, 이미지 처리 |
+| Python 라이브러리 | `lxml` / `python-hwpx 2.9.1+` / `Pillow` | 각 라이브러리 라이선스 | XML 파싱·편집, HWPX 읽기·`HwpxDocument` API, 이미지 처리 |
 
 **상세 참조**: 원본 fork 대비 변경 사항은 아래 "원본(jkf87) 대비 변경 사항" 참조.
 rhwp 포팅 상세는 [`references/rhwp-benchmark.md`](references/rhwp-benchmark.md),
@@ -79,6 +80,29 @@ pip install lxml Pillow
 | G | 세밀 수정 (정규식, 들여쓰기) | hwpx_modifier.py |
 | H | 표 조작 (셀 채우기, 행 추가) | hwpx_form_filler.py |
 | I | 여러 HWPX 병합 | lxml 기반 문단 복사 |
+| J | 시험 문제지 생성 (PDF→HWPX) | exam_builder.py |
+| K | HWP(바이너리) → HWPX 순수 Python 변환 | convert_hwp.py (jkf87/hwp2hwpx-python-refactor) |
+| L | ZIP-level 전역 치환 (양식 표 셀 포함) | zip_replace_all.py (airmang 이식 + lineseg 통합) |
+| M | 스타일 필터 텍스트 치환 (글자 색·밑줄·charPrIDRef·limit) | style_filter_replace.py (python-hwpx 2.x) |
+| N | 자동 첨삭 메모 batch 삽입 (학생 작품 평가 자동화) | add_review_memo.py (python-hwpx 2.x) |
+
+## airmang/hwpx-skill 이식 + python-hwpx 2.x 활용 (2026-05-05)
+
+`python-hwpx` 라이브러리 저자가 운영하는 [airmang/hwpx-skill](https://github.com/airmang/hwpx-skill)
+(Apache-2.0) 의 슬림 ZIP 치환 도구를 이식하고, 동시에 `python-hwpx` 를 1.9 → 2.9.1
+로 글로벌 업그레이드하여 `HwpxDocument` 신규 API (`replace_text_in_runs` 스타일 필터,
+`add_memo_with_anchor`) 를 활용한 워크플로우 M·N 을 추가했습니다.
+
+| 추가 | 출처 / 활용 API |
+|------|-----------------|
+| `scripts/zip_replace_all.py` (워크플로 L) | airmang 이식. lineSegArray 더미 자동 주입 통합 (polaris-dvc strict JID 11004 방지) |
+| `scripts/style_filter_replace.py` (워크플로 M) | `HwpxDocument.replace_text_in_runs(text_color=..., underline_type=..., limit=...)` |
+| `scripts/add_review_memo.py` (워크플로 N) | `HwpxDocument.add_memo_with_anchor(...)` + 저장 후 lineseg 후처리 |
+| `references/python-hwpx-api.md` | 라이브러리 1.9 ↔ 2.x API 시그니처 + 마이그레이션 노트 |
+
+자세한 검증·회귀 테스트 결과는 작업 폴더 `.test/20260505-085332-airmang-스킬반영/CHANGES.md`
+참조. 라이선스 의무 (Apache-2.0 NOTICE 보존, SPDX 헤더 유지) 는
+[`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 4번 항목 참조.
 
 ## rhwp 포팅 (2026-04-18)
 

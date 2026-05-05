@@ -61,6 +61,42 @@ SOFTWARE.
 
 ---
 
+## 3. PolarisOffice/polaris_dvc
+
+- **저장소**: https://github.com/PolarisOffice/polaris_dvc
+- **역할**: HWPX 검증 Rust CLI v0.1.0 prebuilt 바이너리 번들 (`bin/polaris-dvc.exe`).
+- **라이선스**: 원본 저장소 LICENSE/NOTICE 참조 (별도 파일로 보관).
+- **사용**: `verify_hwpx.py --strict` 가 외부 호출.
+
+---
+
+## 4. airmang/hwpx-skill
+
+- **저장소**: https://github.com/airmang/hwpx-skill
+- **저작권**: Copyright (c) 2026 airmang (고규현, `python-hwpx` 라이브러리 저자)
+- **라이선스**: Apache License 2.0 (2026-04-24 MIT → Apache 재라이선싱)
+
+### 참조·이식 범위
+
+| 스킬 내 파일 | 참조한 airmang 파일 | 이식 내용 |
+|--------------|---------------------|-----------|
+| `scripts/zip_replace_all.py` | 동명 파일 | ZIP-level 전역 텍스트 치환 + `mimetype` ZIP_STORED 보존 + temp 파일 안전 처리 + `--inplace --backup --auto-fix-ns` 플래그 + `<,>,</` 키 경고. **이식 시 `inject_dummy_linesegs()` 통합 (lineSegArray 더미 자동 주입)** 추가. |
+| `references/python-hwpx-api.md` | `references/api.md` | `python-hwpx` 2.x API 시그니처 (`HwpxDocument`, `replace_text_in_runs`, `add_memo_with_anchor` 등) 발췌 + 본 스킬 1.9 ↔ 2.x 마이그레이션 노트 |
+
+원본 파일 자체에는 SPDX-License-Identifier 헤더가 보존돼 있고, 이식판에도
+`SPDX-License-Identifier: Apache-2.0` 헤더와 출처 주석을 유지하였습니다.
+
+### 라이선스 전문 (Apache-2.0)
+
+전문은 https://www.apache.org/licenses/LICENSE-2.0 참조. 핵심 의무:
+
+1. 라이선스 사본 동봉 (본 파일에 이 섹션으로 갈음)
+2. 변경 사항 표시 (위 표의 "이식 내용" 컬럼)
+3. NOTICE 파일이 있으면 보존 (airmang 의 NOTICE 본문은 `bin/airmang-NOTICE` 등으로 별도 보관 권장)
+4. 보증 부인
+
+---
+
 ## 문의
 
 추가 고지·수정 요청이 있으면 이슈로 알려주세요.
