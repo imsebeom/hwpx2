@@ -13,6 +13,7 @@ HWPX(한컴오피스 한글 개방형 문서) 생성, 편집, 병합을 위한 C
 | 알고리즘 포팅 | [edwardkim/rhwp](https://github.com/edwardkim/rhwp) | MIT (© 2025-2026 Edward Kim) | 표 계산식 엔진, 네임스페이스 헬퍼, UTF-16 오프셋, zip bomb 방어, 필드 API 포팅 (2026-04-18) |
 | 외부 검증 도구 | [PolarisOffice/polaris_dvc](https://github.com/PolarisOffice/polaris_dvc) | Apache-2.0 | `bin/polaris-dvc.exe` (v0.1.0 prebuilt) — `verify_hwpx --strict` 의 JID 위반 검출 백엔드 (2026-04-26) |
 | 스크립트 이식 | [airmang/hwpx-skill](https://github.com/airmang/hwpx-skill) | Apache-2.0 (© 2026 airmang) | `scripts/zip_replace_all.py` ZIP-level 전역 치환 + temp 안전 처리 + `mimetype ZIP_STORED` 보존 (2026-05-05). lineSegArray 더미 주입은 자체 보강 |
+| 알고리즘 재구현 | [Canine89/hwpxskill](https://github.com/Canine89/hwpxskill) | 라이선스 미지정 | `scripts/page_guard.py` 레퍼런스 대비 페이지 드리프트 가드 (메트릭 비교 알고리즘 참조 후 다중 섹션·`xpath_local`·zip bomb 상한 추가하여 독립 재구현) (2026-05-05) |
 | 스펙 자료 | 한글과컴퓨터 HWP 파일 형식 공개 문서 | 공개 | HWPX XML 스키마 해석 기준 |
 | Python 라이브러리 | `lxml` / `python-hwpx 2.9.1+` / `Pillow` | 각 라이브러리 라이선스 | XML 파싱·편집, HWPX 읽기·`HwpxDocument` API, 이미지 처리 |
 
@@ -85,6 +86,7 @@ pip install lxml Pillow
 | L | ZIP-level 전역 치환 (양식 표 셀 포함) | zip_replace_all.py (airmang 이식 + lineseg 통합) |
 | M | 스타일 필터 텍스트 치환 (글자 색·밑줄·charPrIDRef·limit) | style_filter_replace.py (python-hwpx 2.x) |
 | N | 자동 첨삭 메모 batch 삽입 (학생 작품 평가 자동화) | add_review_memo.py (python-hwpx 2.x) |
+| O | 레퍼런스 99% 복원 + 쪽수 드리프트 가드 | page_guard.py (Canine89 알고리즘 재구현) |
 
 ## airmang/hwpx-skill 이식 + python-hwpx 2.x 활용 (2026-05-05)
 
@@ -103,6 +105,20 @@ pip install lxml Pillow
 자세한 검증·회귀 테스트 결과는 작업 폴더 `.test/20260505-085332-airmang-스킬반영/CHANGES.md`
 참조. 라이선스 의무 (Apache-2.0 NOTICE 보존, SPDX 헤더 유지) 는
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) 4번 항목 참조.
+
+## Canine89/hwpxskill 알고리즘 차용 (2026-05-05)
+
+[Canine89/hwpxskill](https://github.com/Canine89/hwpxskill) (라이선스 미지정)
+의 **레퍼런스 99% 복원 + 쪽수 가드** 워크플로 철학을 받아들여, `page_guard.py`
+의 메트릭 비교 알고리즘만 참조해 본 스킬 스타일로 독립 재구현했습니다.
+원본 코드는 라이선스 부재로 직접 복사하지 않았습니다.
+
+| 추가 | 차용 범위 |
+|------|-----------|
+| `scripts/page_guard.py` | 문단·표 구조·`pageBreak`·텍스트 길이 메트릭 비교 + 임계값(15%/25%) 기반 드리프트 검출. 본 스킬은 `xpath_local()` (네임스페이스 무관) + 다중 섹션 순회 + zip bomb 상한 추가 |
+| SKILL.md "워크플로우 O" | 레퍼런스 보존 체크리스트 + page_guard 통합 흐름 |
+
+자세한 라이선스 고지는 `THIRD_PARTY_NOTICES.md` 5번 항목.
 
 ## rhwp 포팅 (2026-04-18)
 

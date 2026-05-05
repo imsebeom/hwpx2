@@ -95,6 +95,7 @@ pip install python-hwpx lxml --break-system-packages
  ├─ "{학교명}/{담당자} 일괄 치환 (양식 표 셀 포함)" → 워크플로우 L (zip-level 전역 치환)
  ├─ "빨간 글씨 일괄 검정으로/스타일별 부분 치환" → 워크플로우 M (스타일 필터 치환)
  ├─ "학생 작품 첨삭 메모 자동 삽입" → 워크플로우 N (자동 첨삭 메모)
+ ├─ "레퍼런스 양식 그대로/쪽수 동일하게 만들어줘" → 워크플로우 O (레퍼런스 99% 복원 + 쪽수 가드)
  └─ "HWPX 읽어줘" → 워크플로우 E (읽기/추출)
 ```
 
@@ -1300,6 +1301,60 @@ JSON 생성 → `add_review_memo` batch 적용 → 첨삭본 일괄 배포.
 
 ---
 
+## 워크플로우 O: 레퍼런스 99% 복원 + 쪽수 가드
+
+> **사용자가 `.hwpx` 양식을 첨부하고 "이 양식 그대로 / 쪽수 동일하게" 요청할 때.**
+> 결과 문서가 레퍼런스와 **동일한 페이지 수**를 유지해야 하는 보고서·공문 작업의 기본 안전망.
+
+### 핵심 원칙
+
+1. **구조 보존**: `charPrIDRef` / `paraPrIDRef` / `borderFillIDRef` 참조 체계, 표 `rowCnt`/`colCnt`/`cellSz`, `secPr` 모두 동일하게 유지.
+2. **텍스트만 교체**: 문단 수·표 수·`pageBreak`·`columnBreak` 변경 금지. 사용자 요청 범위(본문 텍스트, 값, 항목명)로 한정.
+3. **쪽수 가드 필수**: 빌드 직후 `page_guard.py`로 레퍼런스 대비 드리프트 위험 검사. FAIL 시 결과 제출 금지.
+
+### 기본 흐름
+
+```bash
+# 1) 워크플로우 F (양식 복제) 또는 G (세밀 수정) 또는 L (zip-level 치환) 으로 결과 빌드
+python3 "${CLAUDE_SKILL_DIR}/scripts/clone_form.py" reference.hwpx \
+  --replace '{"기존":"새내용"}' --output result.hwpx
+
+# 2) 구조 검수
+python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" \
+  --source reference.hwpx --result result.hwpx --strict
+
+# 3) 쪽수 드리프트 가드 (필수)
+python3 "${CLAUDE_SKILL_DIR}/scripts/page_guard.py" \
+  --reference reference.hwpx --output result.hwpx
+```
+
+### page_guard.py 가 검사하는 것
+
+| 검사 | 임계값 (기본) | 의미 |
+|---|---|---|
+| 섹션 수 | 정확히 일치 | section\*.xml 개수 |
+| 문단 수 | 정확히 일치 | `<hp:p>` 총 개수 (다중 섹션 합산) |
+| `pageBreak` 속성 | 정확히 일치 | 명시적 페이지 넘김 문단 수 |
+| `columnBreak` 속성 | 정확히 일치 | 명시적 단 넘김 |
+| 표 수 + 형태 | 정확히 일치 | (rowCnt, colCnt, width, height, repeatHeader, pageBreak) 튜플 |
+| 전체 텍스트 길이 | ±15% 편차 | 공백 제외 전체 글자 수 |
+| 문단별 텍스트 길이 | ±25% 편차 | 같은 인덱스 문단끼리 비교 |
+
+임계값은 `--max-text-delta-ratio`, `--max-paragraph-delta-ratio` 로 조정.
+원본보다 텍스트가 압축되어야 하는 작업이면 임계값을 좁혀(0.05 등) 더 빡빡하게 검출 가능.
+
+### Anti-pattern
+
+- ❌ `validate.py` PASS 만으로 완료 처리 → 구조 검증일 뿐 쪽수 보장 아님
+- ❌ 임계값을 무한대(`2.0` 등)로 풀어서 무조건 PASS 만들기 → 가드 기능 상실
+- ❌ 사용자 명시 요청 없이 `<hp:p>`, `<hp:tbl>`, `rowCnt`, `colCnt`, `pageBreak`, `secPr` 변경
+
+### 알고리즘 출처
+
+레퍼런스 99% 복원 철학과 메트릭 비교 알고리즘은 [`Canine89/hwpxskill`](https://github.com/Canine89/hwpxskill) 의 `page_guard.py` 를 참조해 본 스킬 스타일(`xpath_local()` + 다중 섹션 + zip bomb 상한)로 재구현. 자세한 고지는 `THIRD_PARTY_NOTICES.md` 5번 항목.
+
+---
+
 ## 서브에이전트 검수 (★ 권장)
 
 > **문서 생성 후 별도 서브에이전트를 생성하여 품질 검증을 수행한다.**
@@ -1321,6 +1376,10 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" \
 
 # polaris-dvc strict 검증 (JID 위반 검출)
 python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" --result output.hwpx --strict
+
+# 쪽수 드리프트 가드 (레퍼런스 양식 보존이 중요한 경우, 워크플로 O 참조)
+python3 "${CLAUDE_SKILL_DIR}/scripts/page_guard.py" \
+  --reference reference.hwpx --output output.hwpx
 ```
 
 ### 검수 항목
