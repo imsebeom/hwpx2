@@ -918,6 +918,8 @@ if tag in ("tc", "tbl"):
 ### 주의사항 (공통)
 
 - **반드시 lxml 파서 사용** — 정규식 불가 (표 내부 `</hp:p>` 매칭 문제)
+- **셀 내 줄바꿈은 별도 `<hp:p>`로 분리** — 단일 `<hp:t>` text 안의 `\n`은 한글에서 줄바꿈으로 렌더링되지 않는다. 권장: `_set_cell_multi_paragraph`(lxml). 정규식이 꼭 필요하면 `hwpx_helpers.replace_placeholder_multiline` (innermost hp:p만 매치)
+- **nested hp:p 폭발 함정** — 표는 `외부 hp:p > hp:tbl > hp:tc > hp:subList > 내부 hp:p` 구조라 단순 `<hp:p>[\s\S]*?</hp:p>` 정규식은 외부+내부 둘 다 매치된다. multi-line value 치환 시 paragraph가 곱셈으로 폭발(실측: 50KB → 244MB). 반드시 `(?:(?!<hp:p\b)[\s\S])*?` 부정 lookahead 또는 lxml 사용
 - **secPr 문단에 제목 텍스트가 포함될 수 있음** — run을 확인하고 텍스트 있는 run 제거
 - **styleIDRef → "0" 통일 필수** — 한글이 스타일 기반으로 내용을 재정렬할 수 있음
 - **charPr의 borderFillIDRef="1"** — 다른 값이면 글자마다 박스 생김

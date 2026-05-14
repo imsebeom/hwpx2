@@ -388,6 +388,24 @@ class HwpxFormFiller:
         """
         셀 내용을 여러 문단(paragraph)으로 설정.
         기존 첫 번째 문단의 스타일을 복제하여 각 줄마다 별도 <hp:p>를 생성한다.
+
+        [HWPX 셀 줄바꿈 — 권장 방식]
+        HWPX에서 한 셀 내 줄바꿈은 **별도 <hp:p>로 분리**해 표현한다. 단일 <hp:t>의
+        text 안에 '\\n'을 넣어도 한글 프로그램은 줄바꿈으로 렌더링하지 **않는다**.
+        이 함수는 lxml etree로 hp:p를 추가해 위 권장 방식을 따른다.
+
+        [nested 안전성]
+        lxml의 `cell.find('.//{*}subList')`로 셀 안의 subList만 정확히 가져오므로
+        외부 paragraph(표를 포함한 hp:p) 와 섞일 위험은 없다. 정규식
+        `<hp:p>[\\s\\S]*?</hp:p>` 기반 치환은 nested 구조에서 외부+내부 둘 다 매치되어
+        paragraph 곱셈 폭발을 일으킬 수 있다 — string-기반 치환이 필요하면
+        :func:`hwpx_helpers.replace_placeholder_multiline` (innermost hp:p만 매치)
+        사용을 권장.
+
+        [빈 줄 정책]
+        현재 구현은 ``line.strip()``으로 빈 줄을 스킵한다. 의도된 빈 줄을 보존해야
+        하는 경우(예: 단락 사이 간격) 호출 측에서 사전 처리하거나 본 함수를
+        수정한다.
         """
         HP = '{http://www.hancom.co.kr/hwpml/2011/paragraph}'
 

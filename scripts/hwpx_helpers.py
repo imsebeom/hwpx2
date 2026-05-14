@@ -37,10 +37,22 @@ def inject_dummy_linesegs(section_xml: str) -> tuple[str, int]:
     `</hp:p>` 직전 위치에 단 1회만 삽입하며, 이미 linesegarray 가 존재하는
     paragraph 는 건드리지 않는다.
 
+    [nested hp:p 안전]: HWPX 표는 외부 paragraph(hp:p) > hp:tbl > hp:tc > hp:subList
+    > 내부 paragraph(hp:p) 형태로 nested된다. 단순 `(<hp:p>)(.*?)(</hp:p>)` 정규식은
+    외부 시작 + 내부 닫기까지 매치되어 외부에 dummy linesegarray가 잘못 박힐 수 있다.
+    `(?:(?!<hp:p\b).)*?` 부정 lookahead로 innermost paragraph만 매치하도록 보장.
+
+    셀 내 줄바꿈을 paragraph 분리로 처리하는 다른 함수(예: hwpx_form_filler의
+    `_set_cell_multi_paragraph`)도 같은 nested 함정을 가질 수 있으므로 string-기반
+    조작 대신 lxml etree(:func:`ensure_dummy_linesegs_etree`)를 권장.
+
     Returns:
         (변환된 XML, 삽입된 paragraph 수)
     """
-    pattern = re.compile(r"(<hp:p [^>]*>)(.*?)(</hp:p>)", re.DOTALL)
+    # innermost <hp:p>만 매치 — 외부(표 포함) paragraph에 잘못 적용되지 않도록 보호
+    pattern = re.compile(
+        r"(<hp:p [^>]*>)((?:(?!<hp:p\b).)*?)(</hp:p>)", re.DOTALL
+    )
     count = 0
 
     def repl(m: "re.Match[str]") -> str:
@@ -53,6 +65,69 @@ def inject_dummy_linesegs(section_xml: str) -> tuple[str, int]:
 
     new_xml = pattern.sub(repl, section_xml)
     return new_xml, count
+
+
+def replace_placeholder_multiline(section_xml: str, key: str, value: str) -> str:
+    """placeholder가 들어 있는 셀 paragraph를 multi-line value로 안전하게 치환.
+
+    셀 내 줄바꿈을 paragraph 분리로 표현하려면 같은 hp:p를 라인 수만큼 복제해야
+    한다. 단순 `<hp:p>[\\s\\S]*?</hp:p>` 정규식은 nested 구조(표 외부 paragraph가
+    내부 셀 paragraph를 포함)에서 **외부+내부 둘 다 매치 → paragraph 곱셈 폭발**을
+    일으킨다. (실측 사례: section0.xml 50KB → 244MB.)
+
+    이 함수는 innermost hp:p만 매치하는 부정 lookahead로 그 폭발을 차단한다.
+
+    [동작]
+      - value에 \\n이 없으면 단순 string replace (xml escape 적용).
+      - \\n이 있으면 placeholder가 들어 있는 hp:p를 lines 수만큼 복제, 각 줄을
+        별도 paragraph 텍스트로.
+      - placeholder가 hp:p 안에 없으면 fallback으로 \\n을 공백으로 합쳐 단순 치환.
+
+    [한계]
+      - 한 hp:p 안에 같은 multi-line placeholder가 두 번 이상 있으면 두 번째는
+        그대로 남음. lxml 기반 셀 조작(:func:`_set_cell_multi_paragraph`)을 권장.
+
+    Args:
+        section_xml: Contents/section0.xml 문자열
+        key: 치환 대상 placeholder (예: "{{교사활동}}")
+        value: 채울 값 (\\n 줄바꿈 가능)
+
+    Returns:
+        치환 결과 XML
+    """
+    text = "" if value is None else str(value)
+    lines = text.split("\n")
+
+    def _xml_escape(s: str) -> str:
+        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+    if len(lines) == 1:
+        return section_xml.replace(key, _xml_escape(text))
+
+    escaped_key = re.escape(key)
+    # innermost hp:p만 매치 (nested paragraph 폭발 방지)
+    pattern = re.compile(
+        r"<hp:p\b[^>]*>(?:(?!<hp:p\b).)*?"
+        + escaped_key
+        + r"(?:(?!<hp:p\b).)*?</hp:p>",
+        re.DOTALL,
+    )
+
+    def repl(m: "re.Match[str]") -> str:
+        match = m.group(0)
+        return "".join(match.replace(key, _xml_escape(line)) for line in lines)
+
+    new_xml, n = pattern.subn(repl, section_xml)
+    if n == 0:
+        # paragraph 매치 안 됨 — 줄바꿈을 공백으로 합쳐 fallback (silent data loss 경고)
+        import warnings
+        warnings.warn(
+            f"replace_placeholder_multiline: '{key}' not found inside any innermost <hp:p>; "
+            "falling back to inline replace (newlines lost).",
+            stacklevel=2,
+        )
+        return section_xml.replace(key, _xml_escape(" ".join(lines)))
+    return new_xml
 
 
 def ensure_dummy_linesegs_etree(section_tree) -> int:
