@@ -157,6 +157,56 @@ def ensure_dummy_linesegs_etree(section_tree) -> int:
         count += 1
     return count
 
+
+# nested 안전 정규식 — innermost <hp:p> 만 매치 (inject_dummy_linesegs 와 동일 패턴)
+_INNER_P_PATTERN = re.compile(
+    r"<hp:p [^>]*>(?:(?!<hp:p\b).)*?</hp:p>", re.DOTALL
+)
+_LINESEG_PATTERN = re.compile(
+    r"<hp:linesegarray\b[^>]*>.*?</hp:linesegarray>", re.DOTALL
+)
+
+
+def remove_linesegarray_in_paragraphs_matching(section_xml, predicate):
+    """``predicate(block_xml)`` 가 True 인 hp:p 블록의 hp:linesegarray 제거.
+
+    한글2018 같은 일부 구현체는 단락에 저장된 lineseg 캐시(vertpos, horzsize)
+    를 그대로 따라가 자간 압축·점선 끊김·페이지번호 잘림 같은 시각 문제를
+    일으킨다. lineseg 통째 제거 시 한글이 폰트 메트릭으로 자동 재계산하여
+    정확한 위치로 그려진다.
+
+    :func:`inject_dummy_linesegs` 와 **보완 관계** —
+      * 빈 lineseg 단락 (polaris JID 11004 위반) → 더미 주입
+      * 단일/잘못된 lineseg 캐시 (자간 압축, 점선 끊김) → 통째 제거
+
+    Args:
+        section_xml: ``Contents/section*.xml`` 문자열.
+        predicate: ``(block_xml: str) -> bool``. True 면 그 hp:p 의 lineseg 제거.
+            예시:
+              * ``lambda b: 'leader="3"' in b`` — 목차 점선 단락만
+              * ``lambda b: 'horzsize="49108"' in b`` — 단일 lineseg 단락만
+
+    Returns:
+        ``(수정된 XML, lineseg 가 제거된 단락 수)``.
+
+    참조: public-doc-to-hwpx v3.6.5 ``fix_toc_dots.py::remove_linesegarray_from_dotted_paragraphs``
+        (Kminer2053, MIT) 알고리즘 일반화. 원본 소스 코드는 포함하지 않음.
+    """
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        block = m.group(0)
+        if not predicate(block):
+            return block
+        new_block = _LINESEG_PATTERN.sub("", block)
+        if new_block != block:
+            count += 1
+        return new_block
+
+    new_xml = _INNER_P_PATTERN.sub(repl, section_xml)
+    return new_xml, count
+
 # --- 네임스페이스 선언 (section0.xml 루트에 사용) ---
 NS_DECL = (
     'xmlns:ha="http://www.hancom.co.kr/hwpml/2011/app" '

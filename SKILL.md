@@ -29,6 +29,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── hwpx_writer.py         # 줄간격 XML 생성 유틸리티
 │   ├── exam_builder.py          # ★ 시험 문제지 생성 (Workflow J)
 │   ├── convert_hwp.py           # HWP(바이너리) → HWPX 변환 (Workflow K, jkf87 포팅)
+│   ├── writing_optimizer.py     # ★ 공공기관 보고서 글쓰기 자동 변환 (Workflow P, public-doc-to-hwpx 포팅)
 │   └── office/{unpack,pack}.py
 ├── templates/
 │   ├── base/                  # 베이스 Skeleton
@@ -49,7 +50,9 @@ ${CLAUDE_SKILL_DIR}/
     ├── gonmunseo-2025-writing-rules.md  # ★ 2025-01-08 개정 행정업무규정 룰셋 (수신·항목기호 등, jkf87 차용)
     ├── xml-internals.md       # 저수준 XML 구조
     ├── rhwp-benchmark.md      # rhwp 포팅 배경·표 수식·필드 API 사용법
-    └── python-hwpx-api.md     # python-hwpx 라이브러리 API 시그니처 + 1.9 ↔ 2.x 마이그레이션
+    ├── python-hwpx-api.md     # python-hwpx 라이브러리 API 시그니처 + 1.9 ↔ 2.x 마이그레이션
+    ├── writing-principles.md  # ★ 공공기관 보고서 작성 원칙 (개조식·두괄식·적의것들, public-doc-to-hwpx 포팅)
+    └── layout-rules.md        # ★ 레이아웃 최적화 규칙 + 자동 변환 12개 표 (public-doc-to-hwpx 포팅)
 ```
 
 ## rhwp 포팅 요약 (2026-04-18)
@@ -1357,6 +1360,82 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/page_guard.py" \
 
 ---
 
+## 워크플로우 P: 공공기관 보고서 글쓰기 최적화
+
+> 보고서·기획서·시행문 초안을 빌드하기 **직전**에 글쓰기 품질 규칙을 자동 적용한다.
+> 「적의를 보이는 것들」(`-적`/`의`/`것`/`들`) + 한 문장 한 줄 + 두괄식 원칙을 정규식으로 점검.
+
+### 언제 사용
+
+- 공공기관 보고서(`/hwpx`)·학교 학급평가보고서·교육과정 계획서 등 **무게감 있는 행정 문서**의 텍스트 초안
+- AI가 생성한 마크다운/도움말 본문이 산만하거나 늘어질 때 빠르게 다듬는 전처리
+- 워크플로우 A (md→HWPX) 직전에 input.md 를 한 번 통과시키는 권장 단계
+
+### CLI 사용
+
+```bash
+# 텍스트 자동 정리 + 검토 권장 리포트 (stderr)
+python3 "${CLAUDE_SKILL_DIR}/scripts/writing_optimizer.py" input.md \
+    --output cleaned.md \
+    --report writing_report.md
+
+# dry-run (제안만 보고 텍스트는 보존)
+python3 "${CLAUDE_SKILL_DIR}/scripts/writing_optimizer.py" input.md \
+    --dry-run --report writing_report.md > /dev/null
+```
+
+### Python API
+
+```python
+import sys
+sys.path.insert(0, "${CLAUDE_SKILL_DIR}/scripts")
+from writing_optimizer import optimize_text, format_report
+
+cleaned_text, suggestions = optimize_text(raw_md)
+print(format_report(suggestions))
+# cleaned_text 를 md2hwpx.py 입력으로 전달
+```
+
+### 자동 적용 9건 + 검토 권장 5건
+
+| ID | 패턴 | 처리 |
+|---|---|---|
+| R1 | `~와/과 관련된` | → `~ 관련` 자동 |
+| R3 | `~할/될 것으로 보입니다/보인다` | → `~ 예상` 자동 |
+| R4 | `~한/된/진 것으로 판단됩니다/된다` | → `~ 판단` 자동 |
+| R5 | `~할 예정이었으나 이를 유예하였습니다` | → `~ 예정 → 유예` 자동 |
+| R6a | `~하는 것이 필요합니다` | → `~이/가 필요합니다` 자동 (받침 짝조사 자동) |
+| R6b | `~하는 것이 중요합니다` | → `~이/가 중요합니다` 자동 |
+| R8 | `여러/많은/각/모든 ~들이/들을/들은` | → `~이/가 / ~을/를 / ~은/는` 자동 (조사 받침 재맞춤) |
+| R12 | 영문+한글 / 한글+영문 띄어쓰기 누락 | → 띄어쓰기 추가 자동 |
+| R2 | `~에 대한` | 검토 권장 (생략 또는 동사형) |
+| R7 | `~ 중 하나인` | 검토 권장 |
+| R9 | `사회적/경제적/정치적/행정적/조직적/…` | 검토 권장 (-적 제거) |
+| R10 | `~의 ~의 ~` (의 연쇄) | 검토 권장 |
+| R11 | 한 문장 46자 초과 | 검토 권장 (분리 후보 표시) |
+
+근거·원칙: `references/writing-principles.md` + `references/layout-rules.md`.
+
+### 권장 흐름 (Workflow A 통합 예시)
+
+```bash
+# 1. 글쓰기 정리
+python3 "${CLAUDE_SKILL_DIR}/scripts/writing_optimizer.py" \
+    input.md --output cleaned.md --report writing_report.md
+
+# 2. 사용자에게 검토 권장 항목 확인 시키기 (writing_report.md)
+#    R2/R9/R10/R11 은 의미 손실 위험으로 자동 적용 안 됨 → 사용자 판단
+
+# 3. md → HWPX 빌드
+python3 "${CLAUDE_SKILL_DIR}/scripts/md2hwpx.py" cleaned.md output.hwpx
+```
+
+### 출처
+
+- 정규식 규칙·신뢰도 분류: public-doc-to-hwpx v3.6.11 (Kminer2053, MIT)
+  `references/layout-rules.md` 8장 표 독립 재구현
+- 한국어 조사 받침 짝맞춤 처리 (`이/가`, `은/는`, `을/를`) 는 본 스킬에서 추가 보강
+
 ## 서브에이전트 검수 (★ 권장)
 
 > **문서 생성 후 별도 서브에이전트를 생성하여 품질 검증을 수행한다.**
@@ -1502,5 +1581,7 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 - **보고서 양식**: [references/report-style.md](references/report-style.md)
 - **공문서 양식**: [references/official-doc-style.md](references/official-doc-style.md)
 - **python-hwpx API**: [references/python-hwpx-api.md](references/python-hwpx-api.md) — 라이브러리 시그니처 + 1.9 ↔ 2.x 마이그레이션
+- **글쓰기 원칙 (공공기관)**: [references/writing-principles.md](references/writing-principles.md) — 개조식·두괄식·Why→How→What·「적의를 보이는 것들」 (Workflow P 근거)
+- **레이아웃 최적화 규칙**: [references/layout-rules.md](references/layout-rules.md) — 한 문장 35–45자·페이지 걸침·12개 자동 변환 표 (Workflow P 근거)
 - **보고서 기호**: □(16pt) → ○(15pt) → ―(15pt) → ※(13pt)
 - **공문서 번호**: 1. → 가. → 1) → 가) → (1) → (가) → ① → ㉮

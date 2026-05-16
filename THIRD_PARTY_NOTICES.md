@@ -122,6 +122,49 @@ SOFTWARE.
 
 ---
 
+## 6. Kminer2053/public-doc-to-hwpx
+
+- **저장소**: https://github.com/Kminer2053/public-doc-to-hwpx
+- **저작권**: Copyright (c) 2026 public-doc-to-hwpx contributors
+- **라이선스**: MIT License
+
+### 참조·이식 범위
+
+| 스킬 내 파일 | 참조한 public-doc-to-hwpx 파일 | 이식 내용 |
+|--------------|--------------------------------|-----------|
+| `references/writing-principles.md` | 동명 파일 | 공공기관 보고서 작성 원칙 (개조식·두괄식·Why→How→What·「적의를 보이는 것들」 4종) 전체 그대로 흡수. 상단에 출처 헤더 추가. |
+| `references/layout-rules.md` | 동명 파일 | 레이아웃 최적화 규칙 (한 문장 35–45자·페이지 걸침·글머리 위계·시각 스타일·12개 자동 변환 표) 전체 그대로 흡수. 상단에 출처 헤더 추가. |
+| `scripts/writing_optimizer.py` | `references/layout-rules.md` 8장 표 + 원본 SKILL.md `layout_optimizer` 동작 명세 | 정규식 12개 (R1·R3·R4·R5·R6a·R6b·R8·R12a·R12b 자동 + R2·R7·R9·R10·R11 검토 권장) 를 독립 재구현. 한국어 조사 받침 처리(`이/가`, `은/는`, `을/를` 자동 짝맞춤) 보강. **원본 소스 코드는 포함하지 않음** — 알고리즘·규칙 표·신뢰도 분류만 참조. |
+| `scripts/hwpx_helpers.py` — `remove_linesegarray_in_paragraphs_matching()` | `scripts/fix_toc_dots.py::remove_linesegarray_from_dotted_paragraphs` | 목차 점선·자간 압축 단락의 lineseg 캐시 통째 제거 → 한글 폰트 메트릭 재계산 위임 패턴. predicate 인자로 일반화 (목차 점선·단일 lineseg 단락 등 다양한 트리거 조건 지원). `inject_dummy_linesegs()` 의 **보완 관계** (빈 lineseg → 더미 주입 / 잘못된 lineseg → 통째 제거). |
+
+### 라이선스 전문 (MIT License)
+
+```
+MIT License
+
+Copyright (c) 2026 public-doc-to-hwpx contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+```
+
+---
+
 ## 문의
 
 추가 고지·수정 요청이 있으면 이슈로 알려주세요.
