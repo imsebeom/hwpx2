@@ -36,6 +36,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from fix_namespaces import fix_hwpx_namespaces  # noqa: E402
+from form_gate import TemplateGateError, guard_write, record_template  # noqa: E402
 from hwpx_helpers import inject_dummy_linesegs  # noqa: E402
 
 
@@ -96,15 +97,25 @@ def zip_replace_all(
     replacements: Mapping[str, str],
     *,
     ensure_linesegs: bool = True,
+    skip_gate: bool = False,
 ) -> dict[str, int]:
     """HWPX 패키지의 모든 XML 파트에 string-level 치환 적용.
 
+    치환 값이 전부 플레이스홀더면 템플릿 제작으로 보고 통과시키고, 실제 값이면
+    승인된 플레이스홀더 템플릿에서만 허용한다 (form_gate).
+
     Args:
         ensure_linesegs: True 면 section*.xml 에 한해 더미 lineSegArray 주입.
+        skip_gate: 템플릿 게이트 검사 생략.
 
     Returns:
-        통계 dict (parts/xml_parts/changed_xml/replacements/decode_failed/lineseg_injected)
+        통계 dict (parts/xml_parts/changed_xml/replacements/decode_failed/
+        lineseg_injected/is_template)
     """
+
+    is_template = guard_write(
+        str(in_hwpx), replacements.values(), "zip_replace_all", skip_gate
+    )
 
     stats = {
         "parts": 0,
@@ -113,6 +124,7 @@ def zip_replace_all(
         "replacements": 0,
         "decode_failed": 0,
         "lineseg_injected": 0,
+        "is_template": int(is_template),
     }
 
     # 입력=출력 경로면 ZipFile(out, "w")가 입력을 즉시 truncate 하므로 임시 파일 경유
@@ -215,6 +227,11 @@ def _parse_args(argv: list[str]) -> argparse.Namespace:
         default=True,
         help="section*.xml 더미 lineSegArray 주입 비활성화 (airmang 원본 거동)",
     )
+    parser.add_argument(
+        "--skip-template-gate",
+        action="store_true",
+        help="플레이스홀더 템플릿 게이트 생략 (원본에 값 직접 치환)",
+    )
     return parser.parse_args(argv)
 
 
@@ -267,7 +284,11 @@ def main(argv: list[str]) -> int:
             str(replace_out),
             replacements,
             ensure_linesegs=args.ensure_linesegs,
+            skip_gate=args.skip_template_gate,
         )
+    except TemplateGateError as exc:
+        print(f"[게이트 차단] {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:
         print(f"[ERR] replacement failed: {exc}", file=sys.stderr)
         if replace_out != target_path and replace_out.exists():
@@ -301,6 +322,13 @@ def main(argv: list[str]) -> int:
     finally:
         if produced_path != final_path and Path(produced_path).exists():
             Path(produced_path).unlink(missing_ok=True)
+
+    # 플레이스홀더를 써 넣었으면 게이트 매니페스트를 남긴다 (미승인 상태)
+    if replace_stats.get("is_template") and replacements:
+        try:
+            record_template(str(final_path), source=str(input_path))
+        except Exception as exc:
+            print(f"[게이트] 매니페스트 기록 생략: {exc}", file=sys.stderr)
 
     print(f"[OK] wrote: {final_path}")
     print(

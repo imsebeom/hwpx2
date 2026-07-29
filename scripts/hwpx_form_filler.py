@@ -10,10 +10,14 @@ import zipfile
 import shutil
 import os
 import re
+import sys
 import tempfile
 from typing import Dict, List, Tuple, Optional, Any
 from lxml import etree
 from copy import deepcopy
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from form_gate import guard_write, record_template  # noqa: E402
 
 
 class HwpxFormFiller:
@@ -40,6 +44,7 @@ class HwpxFormFiller:
         self.temp_dir = None
         self.section_tree = None
         self._is_extracted = False  # 전체 문서인지 추출된 양식인지
+        self._placeholder_write = False  # 이번 세션이 템플릿 제작인지 (게이트용)
         
     def open(self) -> 'HwpxFormFiller':
         """HWPX 파일 열기"""
@@ -318,7 +323,8 @@ class HwpxFormFiller:
             t_elements = cell.findall('.//{*}t')
             if t_elements:
                 t_elements[0].text = placeholder
-        
+
+        self._placeholder_write = True
         return placeholders
     
     def _find_label_for_cell(self, analysis: Dict, row: int, col: int) -> str:
@@ -339,18 +345,24 @@ class HwpxFormFiller:
     # 4단계: 내용 채우기
     # =========================================================================
     
-    def fill_placeholders(self, data: Dict[str, str], table_index: int = 0) -> int:
+    def fill_placeholders(self, data: Dict[str, str], table_index: int = 0,
+                          skip_gate: bool = False) -> int:
         """
         플레이스홀더를 실제 내용으로 채우기
         - linesegarray 제거 (한글이 자동으로 줄간격 재계산하도록)
-        
+        - 승인된 플레이스홀더 템플릿에만 값을 채울 수 있다 (form_gate)
+
         Args:
             data: {"{{플레이스홀더}}": "내용"} 또는 {"플레이스홀더": "내용"}
             table_index: 테이블 인덱스
-            
+            skip_gate: 템플릿 게이트 검사 생략
+
         Returns:
             채워진 셀 수
         """
+        if guard_write(self.hwpx_path, data.values(), "fill_placeholders", skip_gate):
+            self._placeholder_write = True
+
         # 플레이스홀더 형식 정규화
         normalized_data = {}
         for key, value in data.items():
@@ -447,20 +459,25 @@ class HwpxFormFiller:
         return True
 
     def fill_cells_directly(self, cell_data: Dict[Tuple[int,int], str],
-                           table_index: int = 0) -> int:
+                           table_index: int = 0, skip_gate: bool = False) -> int:
         """
         좌표로 직접 셀 내용 채우기 (레이블은 유지, 내용 셀만 수정)
         - 내용에 줄바꿈(\\n)이 포함되면 각 줄을 별도 문단(paragraph)으로 생성
         - 줄바꿈이 없으면 기존 첫 번째 텍스트 요소만 교체
         - linesegarray 제거 (한글이 자동으로 줄간격 재계산하도록)
+        - 값이 플레이스홀더면 템플릿 제작, 실제 값이면 승인된 템플릿에만 허용 (form_gate)
 
         Args:
             cell_data: {(행,열): "내용"} — 내용에 \\n 포함 시 각 줄이 별도 문단이 됨
             table_index: 테이블 인덱스
+            skip_gate: 템플릿 게이트 검사 생략
 
         Returns:
             채워진 셀 수
         """
+        if guard_write(self.hwpx_path, cell_data.values(), "fill_cells_directly", skip_gate):
+            self._placeholder_write = True
+
         tables = self.get_tables()
         table = tables[table_index]
         rows = table.findall('.//{*}tr')
@@ -750,9 +767,16 @@ class HwpxFormFiller:
                         zf.write(file_path, arcname, compress_type=zipfile.ZIP_STORED)
                     else:
                         zf.write(file_path, arcname)
-        
+
+        # 플레이스홀더를 써 넣었으면 게이트 매니페스트를 남긴다 (미승인 상태)
+        if self._placeholder_write:
+            try:
+                record_template(output_path, source=self.hwpx_path)
+            except Exception as e:
+                print(f"[게이트] 매니페스트 기록 생략: {e}", file=sys.stderr)
+
         return output_path
-    
+
     def close(self):
         """임시 파일 정리"""
         if self.temp_dir and os.path.exists(self.temp_dir):
@@ -808,22 +832,24 @@ def fill_form_with_placeholders(
     template_path: str,
     output_path: str,
     data: Dict[str, str],
-    table_index: int = 0
+    table_index: int = 0,
+    skip_gate: bool = False
 ) -> str:
     """
     플레이스홀더가 있는 양식 채우기
-    
+
     Args:
         template_path: 양식 파일 경로
         output_path: 저장할 경로
         data: {"플레이스홀더명": "내용"} 또는 {"{{플레이스홀더명}}": "내용"}
         table_index: 테이블 인덱스
-        
+        skip_gate: 템플릿 게이트 검사 생략
+
     Returns:
         저장된 파일 경로
     """
     with HwpxFormFiller(template_path) as form:
-        filled = form.fill_placeholders(data, table_index)
+        filled = form.fill_placeholders(data, table_index, skip_gate=skip_gate)
         form.save(output_path)
         print(f"{filled}개 플레이스홀더 채움")
         return output_path
@@ -833,22 +859,24 @@ def fill_form_with_coordinates(
     template_path: str,
     output_path: str,
     cell_data: Dict[Tuple[int,int], str],
-    table_index: int = 0
+    table_index: int = 0,
+    skip_gate: bool = False
 ) -> str:
     """
     좌표로 직접 양식 채우기
-    
+
     Args:
         template_path: 양식 파일 경로
         output_path: 저장할 경로
         cell_data: {(행,열): "내용"}
         table_index: 테이블 인덱스
-        
+        skip_gate: 템플릿 게이트 검사 생략
+
     Returns:
         저장된 파일 경로
     """
     with HwpxFormFiller(template_path) as form:
-        filled = form.fill_cells_directly(cell_data, table_index)
+        filled = form.fill_cells_directly(cell_data, table_index, skip_gate=skip_gate)
         form.save(output_path)
         print(f"{filled}개 셀 채움")
         return output_path

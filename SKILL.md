@@ -21,6 +21,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── validate.py            # HWPX 구조 검증
 │   ├── analyze_template.py    # HWPX 심층 분석 (xpath_local 사용)
 │   ├── clone_form.py           # ★ 양식 복제 (Workflow F)
+│   ├── form_gate.py            # ★ 양식 채우기 게이트 (템플릿 제작→확인→채우기 강제)
 │   ├── verify_hwpx.py         # ★ 서브에이전트 검수 도구 (+ zip bomb·secPr 완전성·글자 테두리 버그)
 │   ├── text_extract.py        # 텍스트 추출
 │   ├── md2hwpx.py             # 마크다운→HWPX 자동 변환
@@ -87,7 +88,8 @@ pip install python-hwpx lxml --break-system-packages
 ```
 사용자 요청
  ├─ "마크다운/텍스트/URL → HWPX" → 워크플로우 A (콘텐츠→HWPX)
- ├─ "양식에 내용 채워줘" → 워크플로우 B (템플릿 치환)
+ ├─ "양식에 내용 채워줘" → ★ 양식 채우기 3단계 (템플릿 제작 → 사용자 확인 → 채우기)
+ │                          그 다음 워크플로우 B/F/H/L 중 선택
  ├─ "HWPX 수정해줘" → 워크플로우 C (기존 문서 편집)
  ├─ "이 HWPX 양식으로 만들어줘" → 워크플로우 D (레퍼런스 기반)
  ├─ "이 양식 복제해서 내용 바꿔줘" → 워크플로우 F (양식 복제) ★
@@ -107,6 +109,9 @@ pip install python-hwpx lxml --break-system-packages
 
 > **사용자가 `.hwpx` 파일을 주고 "이걸로 테스트", "내용 바꿔줘", "이 양식으로" 등을 요청하면
 > 먼저 `clone_form.py --analyze`로 구조를 확인한다.**
+>
+> 그 파일에 **값을 채우는 작업이면 「양식 채우기 3단계」가 먼저다** — 원본에 바로 쓰면
+> 게이트에 막힌다. 아래 분기는 승인된 템플릿을 얻은 다음 어떤 도구로 채울지의 선택이다.
 
 ```
 양식 분석 결과
@@ -391,9 +396,75 @@ subprocess.run(["python3", str(SKILL_DIR/"scripts/validate.py"), str(OUTPUT)])
 
 ---
 
+## ★ 양식 채우기 3단계 (워크플로우 B·F·H·L 공통, 코드로 강제됨)
+
+> **원본 양식에 값을 바로 써 넣을 수 없다.** 반드시 플레이스홀더 템플릿을 먼저 만들고,
+> 사용자 확인을 받은 뒤에 값을 채운다. `form_gate.py`가 이 순서를 검사하며,
+> 승인 기록이 없으면 `zip_replace_all.py` · `clone_form.py` · `HwpxFormFiller`가
+> **예외를 던지고 종료한다**(exit 2).
+
+```
+[1] 템플릿 제작 : 채울 자리를 {{필드명}} 으로 만든다
+[2] 사용자 확인 : PDF/PNG 로 렌더해 보여주고 승인 기록을 남긴다  ← ★ STOP
+[3] 값 채우기   : 승인된 템플릿에만 실제 값을 넣는다
+```
+
+### [1] 템플릿 제작
+
+```bash
+# 표 내용 셀을 레이블 기준으로 자동 플레이스홀더화 (초안)
+python3 "${CLAUDE_SKILL_DIR}/scripts/form_gate.py" make 원본양식.hwpx 템플릿.hwpx --table 0
+```
+
+> ⚠️ 자동 배치는 레이블을 추론하므로 **좌표가 어긋나는 경우가 흔하다**(실측: 값 칸 대신
+> 옆 레이블 칸에 들어감). 병합 셀이 많은 양식은 좌표를 직접 지정하라 —
+> 값이 플레이스홀더면 게이트가 템플릿 제작으로 인식해 통과시킨다.
+
+```python
+with HwpxFormFiller("원본양식.hwpx") as f:
+    f.fill_cells_directly({(0, 1): "{{단원명}}", (0, 3): "{{학급}}"}, 0)
+    f.save("템플릿.hwpx")   # 저장 시 <템플릿>.hwpx.gate.json 자동 기록
+```
+
+### [2] 사용자 확인 ← 여기서 반드시 멈춘다
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/form_gate.py" preview 템플릿.hwpx   # PDF + PNG
+# → PNG 를 Read 로 열어 사용자에게 제시하고, 플레이스홀더 위치가 맞는지 확인받는다
+python3 "${CLAUDE_SKILL_DIR}/scripts/form_gate.py" approve 템플릿.hwpx --note "좌표 확인"
+```
+
+`approve`는 미리보기가 없으면 자동으로 렌더한다. 사용자가 한글로 직접 열어 확인했다면
+`--no-preview`로 승인한다. 승인 후 템플릿이 바뀌면 해시가 달라져 **승인이 자동 무효**가 되므로
+재승인해야 한다.
+
+### [3] 값 채우기
+
+```bash
+python3 "${CLAUDE_SKILL_DIR}/scripts/zip_replace_all.py" 템플릿.hwpx 결과.hwpx \
+    --replace "{{학급}}=5학년 3반" "{{단원명}}=수와 연산" --auto-fix-ns
+```
+
+### 상태 확인과 우회
+
+```bash
+form_gate.py scan   템플릿.hwpx   # 플레이스홀더 목록 + 승인 상태
+form_gate.py status 템플릿.hwpx   # 채우기 가능 여부 (exit 0 / 2)
+```
+
+`scan`은 run 이 쪼개진 플레이스홀더(`{{제`+`목}}`)도 경고한다 — 그대로 두면 치환이 조용히 실패한다.
+
+> **우회는 `--skip-template-gate`(Python API 는 `skip_gate=True`) 하나뿐이다.**
+> 사용자가 이미 검증한 양식을 반복 사용하는 등 근거가 있을 때만 쓰고, 우회했다는 사실을
+> 사용자에게 알린다. 게이트를 피하려고 워크플로우 G(HwpxModifier)나 M(스타일 필터 치환)으로
+> 돌아가지 말 것 — 그 경로는 구조 수정용이지 양식 채우기용이 아니다.
+
+---
+
 ## 워크플로우 B: 템플릿 치환
 
 > **기존 양식의 플레이스홀더를 교체. 양식 문서에 적합.**
+> **선행 조건**: 위 「양식 채우기 3단계」의 [1][2]를 마친 승인된 템플릿이어야 한다.
 
 ```
 [1] 양식 파일 복사 → [2] ObjectFinder로 텍스트 조사
@@ -518,6 +589,10 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/text_extract.py" doc.hwpx --format markdown
 >
 > ⚠️ **테이블 5개 이상 또는 이미지 포함이면 반드시 워크플로우 F 사용.**
 > 워크플로우 D는 header만 재활용하고 section을 새로 만들기 때문에 구조의 97.5%를 잃는다.
+>
+> **선행 조건**: 치환 값이 실제 값이면 승인된 템플릿이어야 한다(「양식 채우기 3단계」).
+> 원문 문구를 곧바로 새 문구로 바꾸는 옛 용법은 게이트에 막힌다 — 1차로 원문을
+> `{{필드명}}`으로 바꾼 템플릿을 만들고 승인받은 뒤, 2차로 값을 채운다.
 
 ### 전체 흐름
 
@@ -734,20 +809,15 @@ with HwpxModifier("표양식.hwpx") as doc:
 ```
 [1] 문서 열기 → [2] 양식 섹션 추출 (optional)
 [3] 표 구조 분석 (analyze_form_table)
-[4] 플레이스홀더 템플릿 생성 → ★ STOP: 사용자 검토
-[5] 검토 완료 후 좌표 기반 셀 채우기 / 행 추가
+[4] 플레이스홀더 템플릿 생성 → ★ STOP: 사용자 검토 → approve
+[5] 승인 후 좌표 기반 셀 채우기 / 행 추가
 [6] 저장
 ```
 
-> **⚠️ 템플릿 활용 시 필수 프로토콜 (Step 4)**
->
-> 기존 HWPX를 양식으로 사용하여 `fill_cells_directly()`로 내용을 채울 때:
-> 1. 먼저 `analyze_form_table()`로 행/열 좌표를 확인한다.
-> 2. 내용 셀에 `{{제목}}`, `{{일시}}` 등 플레이스홀더를 넣어 템플릿을 생성한다.
-> 3. **생성된 템플릿을 열어 사용자에게 보여주고, 좌표가 맞는지 검토를 받는다.**
-> 4. 사용자가 확인한 후에만 실제 내용을 채운다.
->
-> 이미 검증된 플레이스홀더 템플릿이 있으면 Step 4를 건너뛸 수 있다.
+> **⚠️ Step 4 는 권고가 아니라 코드로 강제된다.**
+> `fill_cells_directly()`·`fill_placeholders()`는 쓰려는 값이 플레이스홀더면 템플릿 제작으로
+> 보아 통과시키고, **실제 값이면 승인된 템플릿에서만 허용**한다. 미승인 파일에 값을 채우면
+> `TemplateGateError`가 발생한다. 절차와 명령은 위 「양식 채우기 3단계」 참조.
 
 ### Python API
 
@@ -1141,6 +1211,10 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/verify_hwpx.py" --result out.hwpx --strict
 > **양식 hwpx 의 본문·표 셀에 흩어진 단순 플레이스홀더 (`{학교명}`, `{기관명}` 등)
 > 를 한 줄로 일괄 치환할 때 사용.** lxml 트리를 거치지 않아 가장 빠르고, 표 셀까지
 > 빠짐없이 잡는다.
+>
+> **선행 조건**: 승인된 플레이스홀더 템플릿이어야 한다(「양식 채우기 3단계」).
+> 치환 값이 전부 플레이스홀더면 템플릿 제작으로 보아 통과하고, 치환 목록이 비었으면
+> (lineSegArray 주입 목적 호출) 검사하지 않는다.
 
 ### 언제 워크플로우 B/G/H 가 아닌 L 을 쓰는가
 
@@ -1611,12 +1685,13 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 28. **병합 시 content.hpf 필수 업데이트**: 기반 파일의 content.hpf만 복사하면 다른 파일의 이미지가 hpf에 미등록되어 엑스박스 표시. 병합 후 모든 BinData를 스캔하여 누락 항목을 `<opf:item>` 태그로 content.hpf에 등록해야 한다
 29. **시험 문제지는 워크플로우 J**: PDF 시험지/문제지/평가지 변환 시 `exam_builder.py` 사용. 엔드노트 정답, 탭 정렬 선택지 등 시험 전용 XML 패턴 지원. JSON 데이터를 입력받아 section0.xml을 동적 생성
 27. **글머리기호/번호는 텍스트로 삽입**: 한글의 `<hp:numbering>` 구조를 사용하지 않는다. 목록은 `"- 항목"`, `"1. 항목"` 텍스트를 직접 넣고 paraPr 들여쓰기로 단계를 표현. 의도적 설계 — 호환성과 단순성을 위해 네이티브 글머리기호를 사용하지 않음
-30. **템플릿 활용 시 플레이스홀더 검토 필수**: `fill_cells_directly()`로 기존 HWPX에 내용을 채울 때, 검증된 템플릿이 없으면 반드시 (1) `analyze_form_table()`로 구조 분석 → (2) 플레이스홀더(`{{제목}}` 등) 템플릿 생성 → (3) **STOP하여 사용자에게 열어 보여주고 검토** → (4) 확인 후 실제 내용 채우기 순서를 따른다. 이미 검증된 플레이스홀더 템플릿이 존재하면 이 단계를 건너뛸 수 있다
+30. **★ 양식 채우기는 플레이스홀더 템플릿을 거쳐야 한다 (코드로 강제)**: 사용자가 준 `.hwpx` 양식에 값을 바로 써 넣을 수 없다. (1) 채울 자리를 `{{필드명}}`으로 만든 템플릿 제작 → (2) `form_gate.py preview`로 렌더해 **사용자에게 제시하고 승인(`approve`)** → (3) 승인된 템플릿에만 값 채우기. `zip_replace_all.py`·`clone_form.py`·`HwpxFormFiller.fill_*` 세 경로 모두 승인 기록(`<템플릿>.hwpx.gate.json`)이 없으면 `TemplateGateError`로 종료한다(CLI exit 2). 판정은 자동이다 — 쓰려는 값이 전부 플레이스홀더면 템플릿 제작으로 보아 통과, 실제 값이면 승인을 요구한다. 승인 후 템플릿이 바뀌면 해시 불일치로 승인이 무효가 된다. 우회는 `--skip-template-gate`(API `skip_gate=True`) 하나뿐이며, 우회했으면 사용자에게 알린다. **자동 배치(`form_gate.py make`)는 레이블 추론이라 좌표가 어긋나는 경우가 흔하므로**(실측: 값 칸 대신 옆 칸에 삽입) 미리보기 확인이 형식적 절차가 아니다
 31. **글자 테두리 버그·secPr 완전성 검수**: hwp→hwpx 변환(워크플로우 K)이나 외부 hwpx 양식 편집 후에는 `verify_hwpx.py`가 (a) charPr 절반 이상이 SOLID 테두리 borderFill을 참조하는 "모든 글자 네모 테두리" 버그를 자동 경고하고 → `--fix-borders`로 제거(표 셀 테두리 보존, idempotent), (b) 첫 섹션 secPr의 pagePr/margin 누락·가짜 secPr를 FAIL로 검출(한컴 '손상된 문서' 사고 방지)한다. XML 유효성(validate.py)으로는 둘 다 못 잡으므로 변환·외부양식 경로에서는 반드시 verify_hwpx.py까지 거친다 (jkf87/hwpx-skill v1.0.5 차용, THIRD_PARTY_NOTICES 2번)
 32. **★ charPr 신설은 charProperties 목록 끝에만 append (인덱스 함정)**: 한글은 charPr을 id 속성이 아닌 **header.xml 목록 내 물리적 순서(0-based 인덱스)**로 해석한다(표준 스키마는 `charPrIDRef`를 id 참조로 정의하므로 이는 구현 고유 동작이다 — [ks-x-6101.md](references/ks-x-6101.md) 참조). 새 charPr을 목록 중간(예: id="0" 직후)에 삽입하면 그 뒤 모든 charPrIDRef가 한 칸씩 밀려 문서 전체 서식이 오염된다(본문이 흰색·머리말체로 렌더링되어 "공간은 차지하는데 안 보이는 글자" 증상, validate.py로는 못 잡음). 반드시 id 순서 = 목록 순서를 유지하며 끝에 append하고 itemCnt를 갱신할 것. 진단법: 한글 COM으로 PDF 변환 → PyMuPDF `page.get_text("dict")`의 span `color`/`font`로 흰색(ffffff)·엉뚱한 폰트 검출 (2026-07-09 실측: 청색 표시 작업 중 중간 삽입으로 45p로 부풀었다가 순서 복원 후 36p 정상화)
 33. **표 행 삭제 시 3종 동시 보정**: `<hp:tr>` 제거 후 ① 남은 모든 tr의 tc `cellAddr rowAddr`을 0부터 재번호 ② `<hp:tbl rowCnt>` 차감 ③ `<hp:tbl><hp:sz height>`에서 삭제 행 높이 합 차감. 세로 병합(rowSpan)이 삭제 구간을 가로지르면 rowSpan·병합 셀 height도 보정. 행이 삭제 대상인지 판별은 각 tr의 첫 tc cellAddr 기준. (역으로, 표가 통째로 다음 쪽으로 밀리면 데이터 행 `cellSz height`를 최소값(~800)으로 줄여 내용 맞춤 수축 가능). **표가 페이지 경계에서 잘리는 문제는 `<hp:tbl pageBreak>` 값으로 먼저 다룬다** — `NONE`(표를 나누지 않고 통째로 다음 쪽), `TABLE`(표는 나누되 셀은 안 나눔), `CELL`(기본, 셀 내부까지 나눔) + `repeatHeader="1"`(나뉜 쪽 제목 행 반복). KS X 6101:2024 표 194
 34. **편집 기준본은 hwpx 실물**: md 원고와 실제 제출·유통 hwpx는 다를 수 있다(사용자 수동 수정·버전 분기). 착수 전 `text_extract.py` 또는 `<hp:t>` 정규식 덤프로 실물 텍스트를 뽑아 원고와 대조하고, 완료 후에는 인물명·부서/보직명·연도 등 식별자를 전수 grep해 초안 가정값 잔존을 점검한다 (2026-07-09: 5월 초안의 가상 보직이 최종본에 잔존해 사용자 지적으로 발견)
 35. **글꼴 실재 확인**: `python scripts/font_check.py <file>` — 문서가 참조하는 글꼴이 시스템에 실제로 있는지 검사한다(TTF/TTC name 테이블 직접 파싱, 의존성 없음). 없으면 한컴이 임의 글꼴로 대체해 자간·줄 수가 달라지고 쪽 나눔이 밀리는데, **문서는 정상적으로 열리므로 조용히 넘어간다**. 레퍼런스 대비 쪽수가 어긋나면(워크플로 O) 이것부터 의심할 것. `isEmbedded="1"`인데 `binaryItemIDRef`가 무효인 경우도 오류로 잡는다(KS X 6101:2024 9.3.2.2.2). 실측 사례: `IEP 양식(수학).hwpx`가 미설치 `KoPub돋움체_Pro Bold`를 참조 중
+36. **한컴 COM 에는 절대 경로만**: `Open()`·`SaveAs()`에 상대 경로를 넘기면 COM 서버가 별도 프로세스(CWD=`...\HOffice130\Bin`)라 **자기 설치 폴더 기준으로 해석**해 "파일을 저장할 수 없습니다" 다이얼로그가 뜨고, 그 다이얼로그가 후속 COM 호출을 전부 블록한다. 경로는 `os.path.abspath()`/`Path.resolve()`로 절대화하고 넘기기 직전 `assert os.path.isabs(...)`로 확인한다. **출력 디렉터리 인자도 대상이다** — 파일명만 절대 경로여도 부모가 상대면 같은 사고가 난다(2026-07-20 `/md doc_to_md.py`, 2026-07-29 `form_gate.render_preview` 두 번 반복). 더불어 COM 인스턴스 재생성은 연속 호출에서 산발적으로 RPC 오류를 내므로 **1회 재시도**를 두고, `finally`의 `Quit()`으로 잔여 `Hwp.exe`를 남기지 않는다. `HAction` 방식보다 `gencache.EnsureDispatch` + `SaveAs(path, "PDF", "")`가 안정적이다
 
 ---
 

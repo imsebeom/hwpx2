@@ -26,6 +26,9 @@ import re
 import sys
 import zipfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from form_gate import TemplateGateError, guard_write, record_template  # noqa: E402
+
 
 def extract_texts(hwpx_path):
     """HWPX에서 <hp:t> 태그의 텍스트를 모두 추출한다.
@@ -189,8 +192,11 @@ def _apply_keywords_in_xml(xml_text, sorted_keywords):
 
 
 def clone(src_path, dst_path, replacements=None, keywords=None,
-          title=None, creator=None):
+          title=None, creator=None, skip_gate=False):
     """HWPX 양식을 복제하고 텍스트를 치환한다.
+
+    치환 값이 전부 플레이스홀더면 템플릿 제작으로 보고 통과시키고, 실제 값이면
+    승인된 플레이스홀더 템플릿에서만 허용한다 (form_gate).
 
     Args:
         src_path: 원본 .hwpx 파일 경로
@@ -199,9 +205,13 @@ def clone(src_path, dst_path, replacements=None, keywords=None,
         keywords: Phase 2 키워드 치환 dict (old → new), <hp:t> 내부에서만 적용
         title: 문서 제목 (메타데이터)
         creator: 작성자 (메타데이터)
+        skip_gate: 템플릿 게이트 검사 생략
     """
     replacements = replacements or {}
     sorted_keywords = _prepare_keywords(keywords) if keywords else []
+
+    values = list(replacements.values()) + list((keywords or {}).values())
+    is_template = guard_write(src_path, values, "clone_form", skip_gate)
 
     tmp_path = dst_path + ".tmp"
 
@@ -245,6 +255,13 @@ def clone(src_path, dst_path, replacements=None, keywords=None,
                     zout.writestr(item, data)
 
     os.replace(tmp_path, dst_path)
+
+    # 플레이스홀더를 써 넣었으면 게이트 매니페스트를 남긴다 (미승인 상태)
+    if is_template:
+        try:
+            record_template(dst_path, source=src_path)
+        except Exception as e:
+            print(f"[게이트] 매니페스트 기록 생략: {e}", file=sys.stderr)
 
 
 def validate_result(src_path, dst_path, replacements=None, keywords=None):
@@ -327,6 +344,8 @@ def main():
     parser.add_argument("--title", help="문서 제목 메타데이터")
     parser.add_argument("--creator", help="작성자 메타데이터")
     parser.add_argument("--validate", action="store_true", help="치환 후 검증 실행")
+    parser.add_argument("--skip-template-gate", action="store_true",
+                        help="플레이스홀더 템플릿 게이트 생략 (원본에 값 직접 치환)")
 
     args = parser.parse_args()
 
@@ -372,8 +391,13 @@ def main():
         print(f"키워드 폴백 맵: {len(keywords)}개 항목 ({args.keywords})")
 
     # 복제 실행
-    clone(args.source, args.output, replacements, keywords,
-          title=args.title, creator=args.creator)
+    try:
+        clone(args.source, args.output, replacements, keywords,
+              title=args.title, creator=args.creator,
+              skip_gate=args.skip_template_gate)
+    except TemplateGateError as e:
+        print(f"[게이트 차단] {e}", file=sys.stderr)
+        sys.exit(2)
     print(f"복제 완료: {args.output}")
 
     # 검증
