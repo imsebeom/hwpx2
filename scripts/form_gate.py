@@ -35,8 +35,11 @@ from typing import Any, Dict, Iterable, List, Optional
 MANIFEST_SUFFIX = ".gate.json"
 MANIFEST_VERSION = 1
 
-# {{필드}} 를 기본으로 하되 워크플로우 L 의 {학교명} 단일 중괄호도 인정한다
-PLACEHOLDER_RE = re.compile(r"\{\{[^{}\n]{1,60}\}\}|\{[^{}\s]{1,40}\}")
+# {{필드}} 를 기본으로 하되 워크플로우 L 의 {학교명} 단일 중괄호도 인정한다.
+# 단일 중괄호는 글자·숫자·밑줄·공백만 허용한다 — 공문 본문의 수식·버튼 표기
+# (`{1-2×(제안가격/제안평균가격-95/100)}`, `{(100,000원×1시간)+...}`)가 플레이스홀더로
+# 오탐되던 것을 막는다 (실측: 문서 1,227개 스캔에서 다수 검출)
+PLACEHOLDER_RE = re.compile(r"\{\{[^{}\n]{1,60}\}\}|\{\w[\w ]{0,28}\}")
 _T_RE = re.compile(r"<hp:t[^>]*>(.*?)</hp:t>", re.DOTALL)
 _P_RE = re.compile(r"<hp:p[ >].*?</hp:p>", re.DOTALL)
 
@@ -356,11 +359,29 @@ def make_template(source: str, output: str, table_index: int = 0) -> Dict[str, A
 # CLI
 # ---------------------------------------------------------------------------
 
+def find_templates(root: str) -> List[str]:
+    """디렉터리에서 플레이스홀더를 가진 hwpx 를 찾는다 (기존 양식 일괄 승인용)."""
+    hits = []
+    for p in sorted(Path(root).rglob("*.hwpx")):
+        if any(part in (".git", "_preview", "_check") for part in p.parts):
+            continue
+        try:
+            if scan_placeholders(str(p))["ok"]:
+                hits.append(str(p))
+        except (zipfile.BadZipFile, OSError):
+            continue
+    return hits
+
+
 def _print_scan(hwpx_path: str) -> None:
     found = scan_placeholders(hwpx_path)
     data = read_manifest(hwpx_path)
     print(f"파일: {hwpx_path}")
     print(f"플레이스홀더 {len(found['ok'])}개: {', '.join(found['ok']) or '없음'}")
+    single = [p for p in found["ok"] if not p.startswith("{{")]
+    if single:
+        print(f"  ※ 단일 중괄호 {len(single)}개 — 본문의 버튼명·용어 표기일 수 있으니 "
+              f"승인 전에 확인하라: {', '.join(single[:5])}")
     if found["split"]:
         print(f"⚠ run 이 쪼개진 플레이스홀더 {len(found['split'])}개: "
               f"{', '.join(found['split'])}")
@@ -381,7 +402,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         description="HWPX 양식 채우기 게이트 (템플릿 제작 → 사용자 확인 → 채우기)")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("scan", help="플레이스홀더 목록·게이트 상태")
+    p = sub.add_parser("scan", help="플레이스홀더 목록·게이트 상태 (디렉터리면 재귀 탐색)")
     p.add_argument("hwpx")
 
     p = sub.add_parser("make", help="표 내용 셀을 플레이스홀더로 바꾼 템플릿 생성")
@@ -394,8 +415,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--pages", type=int, default=2)
     p.add_argument("--out")
 
-    p = sub.add_parser("approve", help="사용자 확인 기록")
-    p.add_argument("hwpx")
+    p = sub.add_parser("approve", help="사용자 확인 기록 (여러 파일 지정 가능)")
+    p.add_argument("hwpx", nargs="+")
     p.add_argument("--note")
     p.add_argument("--no-preview", action="store_true",
                    help="사용자가 직접 열어 확인한 경우 렌더 없이 승인")
@@ -408,7 +429,15 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     try:
         if args.cmd == "scan":
-            _print_scan(args.hwpx)
+            if os.path.isdir(args.hwpx):
+                hits = find_templates(args.hwpx)
+                print(f"플레이스홀더를 가진 hwpx {len(hits)}개")
+                for h in hits:
+                    data = read_manifest(h)
+                    state = "승인됨" if data and data.get("approved") else "미승인"
+                    print(f"  [{state}] {h}")
+            else:
+                _print_scan(args.hwpx)
         elif args.cmd == "make":
             data = make_template(args.source, args.output, args.table)
             print(f"템플릿 생성: {args.output}")
@@ -419,9 +448,10 @@ def main(argv: Optional[List[str]] = None) -> int:
             paths = render_preview(args.hwpx, args.out, pages=args.pages)
             print("\n".join(paths))
         elif args.cmd == "approve":
-            data = approve(args.hwpx, args.note, args.no_preview, args.pages)
-            print(f"승인 기록: {args.hwpx} ({data['approved_at']})")
-            print(f"플레이스홀더 {len(data['placeholders'])}개 — 이제 값을 채울 수 있다.")
+            for path in args.hwpx:
+                data = approve(path, args.note, args.no_preview, args.pages)
+                print(f"승인: {path} — 플레이스홀더 {len(data['placeholders'])}개 "
+                      f"({data['approved_at']})")
         elif args.cmd == "status":
             require_approved(args.hwpx)
             print("통과: 승인된 플레이스홀더 템플릿")

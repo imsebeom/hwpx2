@@ -368,28 +368,32 @@ def check_table_grid(hwpx_path):
 
             filled = set()
             overlaps = []
-            for tc in tbl.iter(q("tc")):
-                addr = tc.find(q("cellAddr"))
-                if addr is None:
-                    errors.append(f"{where}: <hp:cellAddr> 없는 셀 존재")
-                    continue
-                span = tc.find(q("cellSpan"))
-                col = int(addr.get("colAddr", 0))
-                row = int(addr.get("rowAddr", 0))
-                cspan = int(span.get("colSpan", 1)) if span is not None else 1
-                rspan = int(span.get("rowSpan", 1)) if span is not None else 1
-                for dr in range(rspan):
-                    for dc in range(cspan):
-                        cell = (row + dr, col + dc)
-                        if cell in filled:
-                            overlaps.append(cell)
-                        filled.add(cell)
+            # 직계 tr > 직계 tc 만 본다. iter() 로 훑으면 셀 안에 든 중첩 표의 셀까지
+            # 바깥 표 격자에 넣어 "셀 주소 중복"을 오탐한다(실측: 1×1 표 안에 표 4개,
+            # 셀 53개가 전부 바깥 격자로 계산됨). 중첩 표는 상위 순회에서 별도로 검사된다.
+            for tr in rows:
+                for tc in tr.findall(q("tc")):
+                    addr = tc.find(q("cellAddr"))
+                    if addr is None:
+                        errors.append(f"{where}: <hp:cellAddr> 없는 셀 존재")
+                        continue
+                    span = tc.find(q("cellSpan"))
+                    col = int(addr.get("colAddr", 0))
+                    row = int(addr.get("rowAddr", 0))
+                    cspan = int(span.get("colSpan", 1)) if span is not None else 1
+                    rspan = int(span.get("rowSpan", 1)) if span is not None else 1
+                    for dr in range(rspan):
+                        for dc in range(cspan):
+                            cell = (row + dr, col + dc)
+                            if cell in filled:
+                                overlaps.append(cell)
+                            filled.add(cell)
 
-                sub = tc.find(q("subList"))
-                if sub is None or not sub.findall(q("p")):
-                    errors.append(
-                        f"{where}: 셀({row},{col})의 subList에 <hp:p>가 없음 "
-                        "— KS X 6101 11.1.2는 빈 셀에도 문단 1개를 요구한다")
+                    sub = tc.find(q("subList"))
+                    if sub is None or not sub.findall(q("p")):
+                        errors.append(
+                            f"{where}: 셀({row},{col})의 subList에 <hp:p>가 없음 "
+                            "— KS X 6101 11.1.2는 빈 셀에도 문단 1개를 요구한다")
 
             if overlaps:
                 errors.append(f"{where}: 셀 주소 중복 {sorted(set(overlaps))[:6]}")

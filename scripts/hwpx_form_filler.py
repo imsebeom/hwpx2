@@ -146,6 +146,29 @@ class HwpxFormFiller:
         """문서의 모든 테이블 반환"""
         return self.section_tree.findall('.//{*}tbl')
     
+    def build_cell_grid(self, table_index: int = 0) -> Dict[Tuple[int, int], Any]:
+        """cellAddr 기준 격자 좌표 → 셀 매핑.
+
+        표의 tc 순번은 병합 때문에 실제 열 위치와 어긋난다(colSpan=2면 다음 셀의
+        colAddr이 +2). 좌표로 셀을 찾을 때는 반드시 이 격자를 쓴다.
+        병합 셀은 시작 좌표에만 등록한다.
+
+        Returns:
+            {(rowAddr, colAddr): <hp:tc> 요소}
+        """
+        tables = self.get_tables()
+        if table_index >= len(tables):
+            raise ValueError(f"테이블 인덱스 {table_index}가 범위를 벗어남 (총 {len(tables)}개)")
+
+        grid = {}
+        for row in tables[table_index].findall('.//{*}tr'):
+            for cell in row.findall('{*}tc'):  # 직계만 — 중첩 표 셀 오염 방지
+                addr = cell.find('{*}cellAddr')
+                if addr is None:
+                    continue
+                grid[(int(addr.get('rowAddr', 0)), int(addr.get('colAddr', 0)))] = cell
+        return grid
+
     def analyze_table_structure(self, table_index: int = 0) -> Dict[str, Any]:
         """
         표 구조 분석 - 레이블 셀과 내용 셀 구분
@@ -184,21 +207,24 @@ class HwpxFormFiller:
             "content_cells": []
         }
         
-        for row_idx, row in enumerate(rows):
-            cells = row.findall('.//{*}tc')
-            result["cols"] = max(result["cols"], len(cells))
-            
+        # 좌표는 tc 순번이 아니라 cellAddr 기준 (병합 셀이 있으면 둘이 어긋난다)
+        grid = self.build_cell_grid(table_index)
+        result["cols"] = max((c for _, c in grid), default=-1) + 1
+
+        for row_idx in range(len(rows)):
+            cols_in_row = sorted(c for r, c in grid if r == row_idx)
             row_data = {"row": row_idx, "cells": []}
-            
-            for col_idx, cell in enumerate(cells):
+
+            for col_idx in cols_in_row:
+                cell = grid[(row_idx, col_idx)]
                 texts = cell.findall('.//{*}t')
                 cell_text = ''.join([t.text for t in texts if t.text])
-                
+
                 # 셀 타입 판단:
                 # - 레이블: 첫 번째 열, 또는 짧은 고정 텍스트
                 # - 내용: 빈 셀, 예시 텍스트, 또는 긴 텍스트
-                cell_type = self._determine_cell_type(col_idx, cell_text, len(cells))
-                
+                cell_type = self._determine_cell_type(cell_text)
+
                 cell_data = {
                     "col": col_idx,
                     "type": cell_type,
@@ -215,52 +241,23 @@ class HwpxFormFiller:
         
         return result
     
-    def _determine_cell_type(self, col_idx: int, text: str, total_cols: int) -> str:
-        """셀 타입 결정 (label 또는 content)"""
+    def _determine_cell_type(self, text: str) -> str:
+        """셀 타입 결정 (label = 보존, content = 값이 들어갈 자리)
+
+        양식에서 값이 들어갈 칸은 비어 있고, 글자가 있는 칸은 레이블이거나 안내문이다.
+        글자가 있는 셀을 content 로 보면 set_placeholders 가 그 글자를 덮어써
+        레이블이 사라진다(실측: "일시" 칸과 지도서 안내문이 플레이스홀더로 교체됨).
+        예시 문구가 명시된 칸만 예외로 채울 자리로 본다.
+        """
         text = text.strip()
-        
-        # 빈 셀 = content
+
         if not text:
             return "content"
-        
-        # 예시/플레이스홀더 패턴 = content
-        if re.search(r'\{\{.*\}\}|예시|작성하|입력하', text):
+
+        if re.search(r'\{\{.*\}\}|예시|작성하|입력하|기입|적으시오', text):
             return "content"
-        
-        # 4열 구조: 레이블|내용|레이블|내용 패턴
-        if total_cols == 4:
-            if col_idx in [0, 2]:  # 0, 2열 = label
-                return "label"
-            else:  # 1, 3열 = content
-                return "content"
-        
-        # 2열 구조: 레이블|내용 패턴
-        if total_cols == 2:
-            if col_idx == 0:
-                return "label"
-            else:
-                return "content"
-        
-        # 첫 번째 열이면서 짧은 텍스트 = label
-        if col_idx == 0 and len(text) < 30:
-            return "label"
-        
-        # 일반적인 레이블 키워드 (첫 번째 열이 아니어도)
-        label_keywords = ['이름', '소속', '연구목적', '연구방법', '연구내용', '연구결론', 
-                         '분야', '대상', '대회명', '입상등급', '제목', '날짜', '향후계획',
-                         '기간', '장소', '연락처', '담당', '비고', '연구주제']
-        for kw in label_keywords:
-            if text == kw or text.startswith(kw) and len(text) < 20:
-                return "label"
-        
-        # 긴 텍스트 = content
-        if len(text) > 30:
-            return "content"
-        
-        # 나머지는 위치 기반
-        if col_idx == 0:
-            return "label"
-        return "content"
+
+        return "label"
     
     def print_table_analysis(self, table_index: int = 0) -> str:
         """표 구조 분석 결과를 보기 좋게 출력"""
@@ -301,44 +298,59 @@ class HwpxFormFiller:
         Returns:
             {"{{플레이스홀더명}}": (행,열)} 매핑
         """
-        tables = self.get_tables()
-        table = tables[table_index]
-        rows = table.findall('.//{*}tr')
-        
         analysis = self.analyze_table_structure(table_index)
         placeholders = {}
-        
+        used_names = set()
+        cell_data = {}
+
         for row_idx, col_idx, current_text in analysis['content_cells']:
             # 자동 매핑: 왼쪽 또는 위의 레이블 셀 이름 사용
             if mapping and (row_idx, col_idx) in mapping:
                 ph_name = mapping[(row_idx, col_idx)]
             else:
                 ph_name = self._find_label_for_cell(analysis, row_idx, col_idx)
-            
+
+            # 같은 이름이 두 곳에 붙으면 치환 시 두 칸이 같은 값으로 채워진다
+            base = ph_name
+            seq = 2
+            while ph_name in used_names:
+                ph_name = f"{base}_{seq}"
+                seq += 1
+            used_names.add(ph_name)
+
             placeholder = f"{{{{{ph_name}}}}}"
             placeholders[placeholder] = (row_idx, col_idx)
-            
-            # 실제 셀에 플레이스홀더 설정
-            cell = rows[row_idx].findall('.//{*}tc')[col_idx]
-            t_elements = cell.findall('.//{*}t')
-            if t_elements:
-                t_elements[0].text = placeholder
+            cell_data[(row_idx, col_idx)] = placeholder
 
-        self._placeholder_write = True
+        # 빈 셀에는 <hp:t> 자체가 없다 — fill_cells_directly 가 run/p 폴백으로 만든다
+        self.fill_cells_directly(cell_data, table_index)
         return placeholders
     
+    @staticmethod
+    def _clean_placeholder_name(text: str, limit: int = 20) -> str:
+        """레이블 텍스트를 플레이스홀더 이름으로 다듬는다.
+
+        긴 안내문이 그대로 이름이 되면 `{{...}}` 로 인식되지 않아(길이 상한) 게이트가
+        값 채우기로 오판한다. 개행·중복 공백·중괄호를 정리하고 길이를 자른다.
+        """
+        name = re.sub(r'\s+', ' ', text.replace('\n', ' ')).strip()
+        name = name.replace('{', '').replace('}', '')
+        return name[:limit].strip() if name else "필드"
+
     def _find_label_for_cell(self, analysis: Dict, row: int, col: int) -> str:
-        """내용 셀에 해당하는 레이블 찾기"""
-        # 같은 행의 왼쪽 레이블 찾기
-        for r, c, text in analysis['label_cells']:
-            if r == row and c < col:
-                return text.replace('\n', '_').strip()
-        
-        # 같은 열의 위쪽 레이블 찾기
-        for r, c, text in analysis['label_cells']:
-            if c == col and r < row:
-                return text.replace('\n', '_').strip()
-        
+        """내용 셀에 해당하는 레이블 찾기 (가장 가까운 것 우선)"""
+        # 같은 행에서 왼쪽으로 가장 가까운 레이블 (먼 것을 고르면 이름이 어긋난다)
+        left = [(c, text) for r, c, text in analysis['label_cells']
+                if r == row and c < col]
+        if left:
+            return self._clean_placeholder_name(max(left)[1])
+
+        # 같은 열에서 위쪽으로 가장 가까운 레이블
+        above = [(r, text) for r, c, text in analysis['label_cells']
+                 if c == col and r < row]
+        if above:
+            return self._clean_placeholder_name(max(above)[1])
+
         return f"cell_{row}_{col}"
     
     # =========================================================================
@@ -478,59 +490,60 @@ class HwpxFormFiller:
         if guard_write(self.hwpx_path, cell_data.values(), "fill_cells_directly", skip_gate):
             self._placeholder_write = True
 
-        tables = self.get_tables()
-        table = tables[table_index]
-        rows = table.findall('.//{*}tr')
+        # 좌표는 cellAddr 격자 기준 — tc 순번과 다르다 (병합 셀)
+        grid = self.build_cell_grid(table_index)
 
         filled = 0
         for (row_idx, col_idx), content in cell_data.items():
-            if row_idx < len(rows):
-                cells = rows[row_idx].findall('.//{*}tc')
-                if col_idx < len(cells):
-                    cell = cells[col_idx]
+            cell = grid.get((row_idx, col_idx))
+            if cell is None:
+                # 조용히 건너뛰면 "N개 채움"만 보고 성공으로 오판한다
+                print(f"[경고] 셀 ({row_idx},{col_idx})이 표#{table_index} 격자에 없다 "
+                      f"— 병합에 가려진 좌표이거나 범위 밖", file=sys.stderr)
+                continue
 
-                    # 줄바꿈이 있으면 별도 문단으로 분리
-                    if '\n' in content:
-                        lines = [l for l in content.split('\n') if l.strip()]
-                        if self._set_cell_multi_paragraph(cell, lines):
-                            filled += 1
-                            continue
-                        # fallback: 멀티 문단 실패 시 단일 텍스트로 처리
+            # 줄바꿈이 있으면 별도 문단으로 분리
+            if '\n' in content:
+                lines = [line for line in content.split('\n') if line.strip()]
+                if self._set_cell_multi_paragraph(cell, lines):
+                    filled += 1
+                    continue
+                # fallback: 멀티 문단 실패 시 단일 텍스트로 처리
 
-                    t_elements = cell.findall('.//{*}t')
+            t_elements = cell.findall('.//{*}t')
 
-                    if t_elements:
-                        # 첫 번째 텍스트 요소에 내용 설정
-                        t_elements[0].text = content
+            if t_elements:
+                # 첫 번째 텍스트 요소에 내용 설정
+                t_elements[0].text = content
 
-                        # 나머지 텍스트 요소는 비우기 (삭제하면 구조 깨질 수 있음)
-                        for t in t_elements[1:]:
-                            t.text = ""
+                # 나머지 텍스트 요소는 비우기 (삭제하면 구조 깨질 수 있음)
+                for t in t_elements[1:]:
+                    t.text = ""
 
+                filled += 1
+            else:
+                # 텍스트 요소가 없는 경우: run 요소 찾아서 t 추가
+                runs = cell.findall('.//{*}run')
+                if runs:
+                    # 기존 run에 t 요소 추가
+                    ns = '{http://www.hancom.co.kr/hwpml/2011/paragraph}'
+                    t_new = etree.SubElement(runs[0], f'{ns}t')
+                    t_new.text = content
+                    filled += 1
+                else:
+                    # run도 없으면 p > run > t 구조 생성
+                    p_elements = cell.findall('.//{*}p')
+                    if p_elements:
+                        ns = '{http://www.hancom.co.kr/hwpml/2011/paragraph}'
+                        run = etree.SubElement(p_elements[0], f'{ns}run')
+                        t_new = etree.SubElement(run, f'{ns}t')
+                        t_new.text = content
                         filled += 1
-                    else:
-                        # 텍스트 요소가 없는 경우: run 요소 찾아서 t 추가
-                        runs = cell.findall('.//{*}run')
-                        if runs:
-                            # 기존 run에 t 요소 추가
-                            ns = '{http://www.hancom.co.kr/hwpml/2011/paragraph}'
-                            t_new = etree.SubElement(runs[0], f'{ns}t')
-                            t_new.text = content
-                            filled += 1
-                        else:
-                            # run도 없으면 p > run > t 구조 생성
-                            p_elements = cell.findall('.//{*}p')
-                            if p_elements:
-                                ns = '{http://www.hancom.co.kr/hwpml/2011/paragraph}'
-                                run = etree.SubElement(p_elements[0], f'{ns}run')
-                                t_new = etree.SubElement(run, f'{ns}t')
-                                t_new.text = content
-                                filled += 1
 
-                    # linesegarray 제거 (한글이 자동으로 줄간격 재계산)
-                    for p in cell.findall('.//{*}p'):
-                        for linesegarray in p.findall('.//{*}linesegarray'):
-                            p.remove(linesegarray)
+            # linesegarray 제거 (한글이 자동으로 줄간격 재계산)
+            for p in cell.findall('.//{*}p'):
+                for linesegarray in p.findall('.//{*}linesegarray'):
+                    p.remove(linesegarray)
 
         return filled
     

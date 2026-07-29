@@ -416,15 +416,20 @@ subprocess.run(["python3", str(SKILL_DIR/"scripts/validate.py"), str(OUTPUT)])
 python3 "${CLAUDE_SKILL_DIR}/scripts/form_gate.py" make 원본양식.hwpx 템플릿.hwpx --table 0
 ```
 
-> ⚠️ 자동 배치는 레이블을 추론하므로 **좌표가 어긋나는 경우가 흔하다**(실측: 값 칸 대신
-> 옆 레이블 칸에 들어감). 병합 셀이 많은 양식은 좌표를 직접 지정하라 —
-> 값이 플레이스홀더면 게이트가 템플릿 제작으로 인식해 통과시킨다.
+> 자동 배치는 **빈 칸에만** 플레이스홀더를 넣고 글자가 있는 칸(레이블·안내문)은 보존한다.
+> 이름은 가장 가까운 레이블에서 따오고, 같은 이름이 겹치면 `_2` 접미사를 붙인다.
+> 그래도 양식에 따라 어긋날 수 있으니 미리보기로 확인하라.
+
+**좌표는 `cellAddr` 격자 기준이다** — `tc` 순번이 아니다. 병합이 있으면 둘이 어긋난다.
 
 ```python
 with HwpxFormFiller("원본양식.hwpx") as f:
-    f.fill_cells_directly({(0, 1): "{{단원명}}", (0, 3): "{{학급}}"}, 0)
+    print(sorted(f.build_cell_grid(0)))   # 실제 좌표 확인: (0,0) (0,2) (0,4) (0,6) ...
+    f.fill_cells_directly({(0, 2): "{{단원명}}", (0, 6): "{{학급}}"}, 0)
     f.save("템플릿.hwpx")   # 저장 시 <템플릿>.hwpx.gate.json 자동 기록
 ```
+
+격자에 없는 좌표(병합에 가려진 자리)를 주면 경고를 내고 건너뛴다 — 조용히 무시하지 않는다.
 
 ### [2] 사용자 확인 ← 여기서 반드시 멈춘다
 
@@ -448,11 +453,17 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/zip_replace_all.py" 템플릿.hwpx 결과.h
 ### 상태 확인과 우회
 
 ```bash
-form_gate.py scan   템플릿.hwpx   # 플레이스홀더 목록 + 승인 상태
-form_gate.py status 템플릿.hwpx   # 채우기 가능 여부 (exit 0 / 2)
+form_gate.py scan   템플릿.hwpx    # 플레이스홀더 목록 + 승인 상태
+form_gate.py scan   <디렉터리>     # 재귀 탐색 — 기존 양식의 승인 상태를 한눈에
+form_gate.py status 템플릿.hwpx    # 채우기 가능 여부 (exit 0 / 2)
+form_gate.py approve A.hwpx B.hwpx --no-preview   # 이미 검증된 양식 일괄 승인
 ```
 
 `scan`은 run 이 쪼개진 플레이스홀더(`{{제`+`목}}`)도 경고한다 — 그대로 두면 치환이 조용히 실패한다.
+단일 중괄호(`{학교명}`)는 본문의 버튼명·용어 표기와 형태가 같으므로 별도 표시된다.
+
+> **이미 쓰던 플레이스홀더 양식은 승인 기록이 없어 첫 사용 시 막힌다.** 그 양식이 검증된
+> 것이면 `scan <디렉터리>`로 목록을 뽑아 사용자에게 확인받고 `approve`로 한 번에 기록한다.
 
 > **우회는 `--skip-template-gate`(Python API 는 `skip_gate=True`) 하나뿐이다.**
 > 사용자가 이미 검증한 양식을 반복 사용하는 등 근거가 있을 때만 쓰고, 우회했다는 사실을
@@ -857,8 +868,9 @@ with HwpxFormFiller("공문.hwpx") as doc:
 |--------|------|
 | `find_section_by_keyword(keyword)` | "붙임 2", "별지 제1호" 등으로 섹션 범위 찾기 |
 | `extract_form_section(keyword, output)` | 섹션 추출하여 새 파일로 저장 |
+| `build_cell_grid(table_index)` | **cellAddr 격자 좌표 → 셀 매핑** (좌표 확인은 여기부터) |
 | `analyze_table_structure(table_index)` | 표 구조 분석 (행/열, 레이블/내용 셀 구분) |
-| `fill_cells_directly(cell_data, table_index)` | 좌표 기반 셀 채우기 `{(행,열): "내용"}` |
+| `fill_cells_directly(cell_data, table_index)` | 좌표 기반 셀 채우기 `{(행,열): "내용"}` — 격자 좌표 |
 | `add_table_row(table_index, after_row, contents)` | 행 추가 (cellAddr/rowSpan/rowCnt 자동 업데이트) |
 | `duplicate_row_with_content(table_index, source_row, mapping)` | 행 복제 후 내용 수정 |
 
@@ -1692,6 +1704,7 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 34. **편집 기준본은 hwpx 실물**: md 원고와 실제 제출·유통 hwpx는 다를 수 있다(사용자 수동 수정·버전 분기). 착수 전 `text_extract.py` 또는 `<hp:t>` 정규식 덤프로 실물 텍스트를 뽑아 원고와 대조하고, 완료 후에는 인물명·부서/보직명·연도 등 식별자를 전수 grep해 초안 가정값 잔존을 점검한다 (2026-07-09: 5월 초안의 가상 보직이 최종본에 잔존해 사용자 지적으로 발견)
 35. **글꼴 실재 확인**: `python scripts/font_check.py <file>` — 문서가 참조하는 글꼴이 시스템에 실제로 있는지 검사한다(TTF/TTC name 테이블 직접 파싱, 의존성 없음). 없으면 한컴이 임의 글꼴로 대체해 자간·줄 수가 달라지고 쪽 나눔이 밀리는데, **문서는 정상적으로 열리므로 조용히 넘어간다**. 레퍼런스 대비 쪽수가 어긋나면(워크플로 O) 이것부터 의심할 것. `isEmbedded="1"`인데 `binaryItemIDRef`가 무효인 경우도 오류로 잡는다(KS X 6101:2024 9.3.2.2.2). 실측 사례: `IEP 양식(수학).hwpx`가 미설치 `KoPub돋움체_Pro Bold`를 참조 중
 36. **한컴 COM 에는 절대 경로만**: `Open()`·`SaveAs()`에 상대 경로를 넘기면 COM 서버가 별도 프로세스(CWD=`...\HOffice130\Bin`)라 **자기 설치 폴더 기준으로 해석**해 "파일을 저장할 수 없습니다" 다이얼로그가 뜨고, 그 다이얼로그가 후속 COM 호출을 전부 블록한다. 경로는 `os.path.abspath()`/`Path.resolve()`로 절대화하고 넘기기 직전 `assert os.path.isabs(...)`로 확인한다. **출력 디렉터리 인자도 대상이다** — 파일명만 절대 경로여도 부모가 상대면 같은 사고가 난다(2026-07-20 `/md doc_to_md.py`, 2026-07-29 `form_gate.render_preview` 두 번 반복). 더불어 COM 인스턴스 재생성은 연속 호출에서 산발적으로 RPC 오류를 내므로 **1회 재시도**를 두고, `finally`의 `Quit()`으로 잔여 `Hwp.exe`를 남기지 않는다. `HAction` 방식보다 `gencache.EnsureDispatch` + `SaveAs(path, "PDF", "")`가 안정적이다
+37. **표 셀 좌표는 cellAddr 격자, 순회는 직계만**: `tr` 안 `tc` 의 순번은 실제 열 위치가 아니다 — `colSpan="2"` 병합이 있으면 순번 0,1,2가 실제로는 열 0,2,4다. 좌표로 셀을 찾을 때는 `build_cell_grid()`처럼 `cellAddr`의 `rowAddr`/`colAddr`을 써야 하며, 순번을 쓰면 엉뚱한 칸을 채운다. 함께 지킬 것은 **순회 범위** — `tbl.iter(tc)`로 훑으면 **셀 안에 든 중첩 표의 셀까지** 바깥 표 것으로 계산된다(실측: 1×1 표 안의 표 4개, 셀 53개가 전부 바깥 격자로 들어가 `verify_hwpx`가 정상 문서를 "셀 주소 중복"으로 FAIL 판정). 반드시 `tbl > tr > tc` 직계 경로로 순회하고, 중첩 표는 상위 순회에서 별도 표로 검사한다
 
 ---
 
