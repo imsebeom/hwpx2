@@ -17,6 +17,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── hwpx_helpers.py        # ★ 헬퍼 라이브러리 (+ local_name/utf16/zip 상한)
 │   ├── table_calc.py          # ★ 표 계산식 엔진 (SUM/AVG/IF 등, rhwp 포팅)
 │   ├── build_hwpx.py          # 템플릿+XML → .hwpx 조립
+│   ├── build_version.py       # ★ 파일명 날짜·순번 자동 부여 (같은 날 재빌드 덮어쓰기 방지)
 │   ├── fix_namespaces.py      # ★ 필수: 네임스페이스 후처리
 │   ├── validate.py            # HWPX 구조 검증
 │   ├── analyze_template.py    # HWPX 심층 분석 (xpath_local 사용)
@@ -318,6 +319,21 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/fix_namespaces.py" result.hwpx
 # 4. 검증
 python3 "${CLAUDE_SKILL_DIR}/scripts/validate.py" result.hwpx
 ```
+
+### 같은 날 여러 번 빌드할 때 (파일명 순번)
+
+`<이름>_<YYMMDD>_<NN>.hwpx`처럼 수정할 때마다 날짜와 순번을 붙이는 산출물이면 이름을 손으로 짓지 말고 `build_version.py`에 맡긴다. 채움AI 2차 출제에서 2026-07-30 하루에 아홉 번 고치고도 전부 `_260730_01`에 덮어썼다.
+
+```python
+import sys
+sys.path.insert(0, "<스킬>/scripts")
+from build_version import new_build, latest_build
+
+out = new_build(dirpath, "제출_문항1_전지직렬")    # 오늘 최대 순번 + 1 (없으면 _01)
+src = latest_build(dirpath, "제출_문항1_전지직렬")  # 날짜·순번이 가장 큰 것
+```
+
+답안표·삽화 삽입처럼 **뒤에 붙는 단계는 `latest_build()`로 최신본을 찾는다** — 파일명을 하드코딩하면 순번이 올라갈 때마다 깨진다. 확장자는 `ext=` 인자로 바꾼다.
 
 ### Python 빌드 스크립트 패턴
 
