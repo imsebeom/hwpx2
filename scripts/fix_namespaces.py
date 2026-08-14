@@ -19,6 +19,10 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from hwpx_helpers import force_default_print_method  # noqa: E402
+
 
 def _fix_item_counts(header_xml):
     """header.xml의 itemCnt 속성을 실제 자식 요소 수와 일치시킨다.
@@ -84,6 +88,13 @@ def fix_hwpx_namespaces(hwpx_path):
                         text = _fix_item_counts(text)
 
                     data = text.encode("utf-8")
+
+                # 모아 찍기(PrintMethod=4)로 저장된 양식을 편집하면 PDF와 인쇄가
+                # 한 장에 두 쪽으로 나온다. 기본 인쇄로 되돌린다.
+                elif item.filename == "settings.xml":
+                    text, fixed = force_default_print_method(data.decode("utf-8"))
+                    if fixed:
+                        data = text.encode("utf-8")
 
                 # mimetype은 반드시 ZIP_STORED로 유지
                 if item.filename == "mimetype":

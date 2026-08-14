@@ -67,6 +67,33 @@ def inject_dummy_linesegs(section_xml: str) -> tuple[str, int]:
     return new_xml, count
 
 
+# settings.xml 의 PrintMethod. 0 = 기본 인쇄(한 장에 한 쪽), 4 = 모아 찍기.
+# 외부에서 받은 양식이 4 를 담고 있으면 한컴 SaveAs(PDF) 와 인쇄가 그 배치를 그대로
+# 따라 A4 한 장에 두 쪽으로 나온다. 문서 내용에는 아무 흔적이 없어 PDF 를 눈으로
+# 보기 전까지 알아채기 어렵다. (2026-08-14 민주시민교육 실습지 양식 실측)
+_PRINT_METHOD_RE = re.compile(
+    r'(<config:config-item\s+name="PrintMethod"\s+type="\w+">)(\d+)(</config:config-item>)'
+)
+
+
+def force_default_print_method(settings_xml: str) -> tuple[str, int]:
+    """settings.xml 의 PrintMethod 를 0(기본 인쇄)으로 되돌린다.
+
+    Returns:
+        (수정된 XML, 바꾼 건수)
+    """
+    count = 0
+
+    def repl(m):
+        nonlocal count
+        if m.group(2) == "0":
+            return m.group(0)
+        count += 1
+        return m.group(1) + "0" + m.group(3)
+
+    return _PRINT_METHOD_RE.sub(repl, settings_xml), count
+
+
 def replace_placeholder_multiline(section_xml: str, key: str, value: str) -> str:
     """placeholder가 들어 있는 셀 paragraph를 multi-line value로 안전하게 치환.
 

@@ -37,7 +37,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from fix_namespaces import fix_hwpx_namespaces  # noqa: E402
 from form_gate import TemplateGateError, guard_write, record_template  # noqa: E402
-from hwpx_helpers import inject_dummy_linesegs  # noqa: E402
+from hwpx_helpers import force_default_print_method, inject_dummy_linesegs  # noqa: E402
 
 
 def _clone_zipinfo(info: zipfile.ZipInfo, *, force_stored: bool = False) -> zipfile.ZipInfo:
@@ -110,7 +110,7 @@ def zip_replace_all(
 
     Returns:
         통계 dict (parts/xml_parts/changed_xml/replacements/decode_failed/
-        lineseg_injected/is_template)
+        lineseg_injected/print_method_reset/is_template)
     """
 
     is_template = guard_write(
@@ -124,6 +124,7 @@ def zip_replace_all(
         "replacements": 0,
         "decode_failed": 0,
         "lineseg_injected": 0,
+        "print_method_reset": 0,
         "is_template": int(is_template),
     }
 
@@ -167,6 +168,12 @@ def zip_replace_all(
                         text, injected = inject_dummy_linesegs(text)
                         if injected:
                             stats["lineseg_injected"] += injected
+
+                    # 모아 찍기(PrintMethod=4) 양식을 편집하면 PDF·인쇄가 한 장에
+                    # 두 쪽으로 나온다. 기본 인쇄로 되돌린다.
+                    if info.filename == "settings.xml":
+                        text, fixed = force_default_print_method(text)
+                        stats["print_method_reset"] += fixed
 
                     if text != original_text or (
                         ensure_linesegs and _is_section_xml(info.filename)
