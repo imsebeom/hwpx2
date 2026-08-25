@@ -541,8 +541,8 @@
               <hc:intent value="-1000" unit="HWPUNIT"/>
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
-              <hc:prev value="1200" unit="HWPUNIT"/>
-              <hc:next value="300" unit="HWPUNIT"/>
+              <hc:prev value="0" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:case>
@@ -551,8 +551,8 @@
               <hc:intent value="-1000" unit="HWPUNIT"/>
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
-              <hc:prev value="2400" unit="HWPUNIT"/>
-              <hc:next value="600" unit="HWPUNIT"/>
+              <hc:prev value="0" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:default>
@@ -571,7 +571,7 @@
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="700" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:case>
@@ -581,7 +581,7 @@
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="1400" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:default>
@@ -600,7 +600,7 @@
               <hc:left value="1100" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="700" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:case>
@@ -610,7 +610,7 @@
               <hc:left value="2200" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="1400" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:default>
@@ -629,7 +629,7 @@
               <hc:left value="2200" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="700" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:case>
@@ -639,7 +639,7 @@
               <hc:left value="4400" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="1400" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="160" unit="HWPUNIT"/>
           </hp:default>
@@ -766,7 +766,7 @@
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="800" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="150" unit="HWPUNIT"/>
           </hp:case>
@@ -776,7 +776,7 @@
               <hc:left value="0" unit="HWPUNIT"/>
               <hc:right value="0" unit="HWPUNIT"/>
               <hc:prev value="0" unit="HWPUNIT"/>
-              <hc:next value="1600" unit="HWPUNIT"/>
+              <hc:next value="0" unit="HWPUNIT"/>
             </hh:margin>
             <hh:lineSpacing type="PERCENT" value="150" unit="HWPUNIT"/>
           </hp:default>
