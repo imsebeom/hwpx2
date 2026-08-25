@@ -136,8 +136,9 @@ pip install python-hwpx lxml --break-system-packages
 
 > **마크다운·텍스트·URL → 구조화된 HWPX 문서. 이 워크플로우가 핵심.**
 
-> **⚠️ md2hwpx.py를 직접 실행하지 마라.** md2hwpx.py는 base/report 템플릿만 지원하며,
-> government 템플릿의 컬러 배너·섹션 바·표지 페이지를 생성할 수 없다.
+> **⚠️ 컬러 배너·섹션 바·표지 페이지가 필요하면 md2hwpx.py를 직접 실행하지 마라.**
+> md2hwpx.py는 6개 템플릿(base, report, gonmun, minutes, proposal, government)의 **본문 조판**만 한다.
+> government의 표지 배너·섹션 바는 만들지 못하므로, 그 서식이 필요하면
 > **반드시 `hwpx_helpers.py`를 import하고 아래 흐름을 따른다.**
 
 ### 전체 흐름
@@ -154,8 +155,8 @@ pip install python-hwpx lxml --break-system-packages
 [8] validate.py 검증
 ```
 
-> **government 템플릿**: `from hwpx_helpers import *` → `make_cover_page()` → `make_section_bar()` → `make_body_para()`
-> **report/base/gonmun/minutes/proposal 템플릿**: `python3 md2hwpx.py input.md --template report --output out.hwpx` 직접 사용 가능
+> **government 표지·섹션 바**: `from hwpx_helpers import *` → `make_cover_page()` → `make_section_bar()` → `make_body_para()`
+> **본문만 필요한 경우(6개 템플릿 전부)**: `python3 md2hwpx.py input.md --template report --output out.hwpx` 직접 사용 가능
 
 ### md2hwpx.py 사용법 (report/base 등 일반 템플릿)
 
@@ -1621,6 +1622,7 @@ python3 "${CLAUDE_SKILL_DIR}/scripts/page_guard.py" \
 | section 크기 | 원본 대비 비율 | 50% 미만 시 FAIL |
 | **secPr 완전성** | 첫 섹션 secPr의 pagePr/margin 자식 + 가짜 secPr 휴리스틱 | 누락·가짜 시 FAIL (한컴 '손상 문서' 방지) |
 | **글자 테두리 버그** | charPr 절반 이상이 SOLID 테두리 borderFill 참조 | 검출 시 WARN (`--fix-borders`로 제거) |
+| **문단 위/아래 간격** | 문서가 쓰는 paraPr의 `hc:prev`/`hc:next`가 서로 다른지, hp:case와 hp:default 값이 어긋나는지 | 검출 시 WARN (한컴 '문단 모양' 값이 제각각으로 보임) |
 | **polaris-dvc** (`--strict`) | JID 위반 (구조·컨테이너·규칙) | 위반 1건 이상 |
 
 ### polaris-dvc strict 모드

@@ -99,6 +99,27 @@ STYLE_PROFILES = {
         "table_header": {"charPr": "0",  "paraPr": "0"},
         "table_cell":   {"charPr": "0",  "paraPr": "0"},
     },
+    "government": {
+        "title":        {"charPr": "144", "paraPr": "20"},  # 22pt, 가운데
+        "h2":           {"charPr": "81",  "paraPr": "0"},   # 18pt 볼드
+        "h3":           {"charPr": "18",  "paraPr": "0"},   # 13pt 볼드
+        "h4":           {"charPr": "18",  "paraPr": "0"},
+        "h5":           {"charPr": "18",  "paraPr": "0"},
+        "h6":           {"charPr": "38",  "paraPr": "0"},
+        "body":         {"charPr": "38",  "paraPr": "4"},   # 13pt, 본문 JUSTIFY
+        "bold":         {"charPr": "18"},
+        "italic":       {"charPr": "38"},
+        "underline":    {"charPr": "38"},
+        "strikethrough":{"charPr": "38"},
+        "small":        {"charPr": "38",  "paraPr": "4"},
+        "quote":        {"charPr": "38",  "paraPr": "13"},  # 들여쓰기 1000
+        "list_l1":      {"charPr": "38",  "paraPr": "13"},  # 들여쓰기 1000
+        "list_l2":      {"charPr": "38",  "paraPr": "14"},  # 들여쓰기 2000
+        "list_l3":      {"charPr": "38",  "paraPr": "12"},  # 들여쓰기 3000
+        "table_header": {"charPr": "18",  "paraPr": "1",  "bf": "4"},   # 볼드, 가운데
+        "table_cell":   {"charPr": "38",  "paraPr": "2",  "bf": "4"},   # 표 셀 기본
+        # government는 borderFill 3이 테두리 NONE이라 표 선이 사라진다 → 4(SOLID)를 쓴다
+    },
 }
 
 # minutes와 proposal은 report와 유사한 매핑
@@ -354,8 +375,8 @@ class SectionBuilder:
 
         def make_cell(text: str, is_header: bool, col_idx: int, row_idx: int,
                       row_span: int = 1) -> str:
-            bf = "4" if is_header else "3"
             cp = self.profile.get("table_header" if is_header else "table_cell", self.profile["body"])
+            bf = cp.get("bf", "4" if is_header else "3")
             char_pr = cp["charPr"]
             default_para_pr = cp.get("paraPr", "0")
             lines = split_cell_lines(text)
@@ -416,6 +437,9 @@ class SectionBuilder:
 
         all_rows = header_row + "\n" + "\n".join(data_rows)
 
+        # 표 바깥 테두리도 셀과 같은 borderFill을 쓴다(템플릿마다 id 의미가 다르다)
+        tbl_bf = self.profile.get("table_cell", {}).get("bf", "3")
+
         if self._first_para:
             self._first_para = False
             secpr_part = f"""    <hp:run charPrIDRef="0">
@@ -427,7 +451,7 @@ class SectionBuilder:
         tbl_xml = f'''  <hp:p id="{pid}" paraPrIDRef="0" styleIDRef="0" pageBreak="0" columnBreak="0" merged="0">
 {secpr_part}
     <hp:run charPrIDRef="0">
-      <hp:tbl id="{tbl_id}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="{num_rows}" colCnt="{num_cols}" cellSpacing="0" borderFillIDRef="3" noAdjust="0">
+      <hp:tbl id="{tbl_id}" zOrder="0" numberingType="TABLE" textWrap="TOP_AND_BOTTOM" textFlow="BOTH_SIDES" lock="0" dropcapstyle="None" pageBreak="CELL" repeatHeader="0" rowCnt="{num_rows}" colCnt="{num_cols}" cellSpacing="0" borderFillIDRef="{tbl_bf}" noAdjust="0">
         <hp:sz width="{body_width}" widthRelTo="ABSOLUTE" height="{total_height}" heightRelTo="AT_LEAST" protect="0"/>
         <hp:pos treatAsChar="0" affectLSpacing="0" flowWithText="1" allowOverlap="0" holdAnchorAndSO="0" vertRelTo="PARA" horzRelTo="COLUMN" vertAlign="TOP" horzAlign="LEFT" vertOffset="0" horzOffset="0"/>
         <hp:outMargin left="0" right="0" top="0" bottom="0"/>
@@ -738,7 +762,7 @@ def main():
     parser.add_argument("input", type=Path, help="입력 마크다운 파일")
     parser.add_argument("--output", "-o", type=Path, required=True, help="출력 HWPX 파일")
     parser.add_argument("--template", "-t", default="report",
-                        choices=["base", "gonmun", "report", "minutes", "proposal"],
+                        choices=["base", "gonmun", "report", "minutes", "proposal", "government"],
                         help="문서 템플릿 (기본: report)")
     parser.add_argument("--header", type=Path, help="커스텀 header.xml (선택)")
     parser.add_argument("--title", help="문서 제목 (자동 감지 가능)")

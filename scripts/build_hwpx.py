@@ -42,7 +42,7 @@ SKILL_DIR = SCRIPT_DIR.parent
 TEMPLATES_DIR = SKILL_DIR / "templates"
 BASE_DIR = TEMPLATES_DIR / "base"
 
-AVAILABLE_TEMPLATES = ["gonmun", "report", "minutes", "proposal", "government"]
+AVAILABLE_TEMPLATES = ["base", "gonmun", "report", "minutes", "proposal", "government"]
 
 
 def validate_xml(filepath: Path) -> None:
@@ -97,6 +97,16 @@ def update_metadata(content_hpf: Path, title: str | None, creator: str | None) -
 STORED_ENTRIES = ("mimetype", "version.xml")
 
 
+# 편집 도구와 백업 훅이 남긴 파일이 패키지에 섞이지 않도록 거른다.
+# (Edit/Write 훅이 원본 옆에 .bak을 만들며, templates/base는 통째로 복사된다)
+NON_CONTENT_SUFFIXES = (".bak", ".tmp", ".orig", ".rej", ".swp")
+
+
+def _is_non_content(rel_path: str) -> bool:
+    name = rel_path.rsplit("/", 1)[-1]
+    return name.endswith(NON_CONTENT_SUFFIXES) or name.startswith("~$") or name == "Thumbs.db"
+
+
 def pack_hwpx(input_dir: Path, output_path: Path) -> None:
     """Create HWPX archive with mimetype first; mimetype/version.xml uncompressed."""
     mimetype_file = input_dir / "mimetype"
@@ -106,7 +116,7 @@ def pack_hwpx(input_dir: Path, output_path: Path) -> None:
     all_files = sorted(
         p.relative_to(input_dir).as_posix()
         for p in input_dir.rglob("*")
-        if p.is_file()
+        if p.is_file() and not _is_non_content(p.relative_to(input_dir).as_posix())
     )
 
     with ZipFile(output_path, "w", ZIP_DEFLATED) as zf:
@@ -206,8 +216,8 @@ def build(
         # 1. Copy base template
         shutil.copytree(BASE_DIR, work)
 
-        # 2. Apply template overlay
-        if template:
+        # 2. Apply template overlay ("base"는 1번에서 이미 복사돼 오버레이가 없다)
+        if template and template != "base":
             overlay_dir = TEMPLATES_DIR / template
             if not overlay_dir.is_dir():
                 raise SystemExit(

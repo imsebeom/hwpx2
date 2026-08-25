@@ -15,6 +15,16 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile
 
 
+# 편집 도구와 백업 훅이 남긴 파일이 패키지에 섞이지 않도록 거른다.
+# (Edit/Write 훅이 원본 옆에 .bak을 만들며, templates/base는 통째로 복사된다)
+NON_CONTENT_SUFFIXES = (".bak", ".tmp", ".orig", ".rej", ".swp")
+
+
+def _is_non_content(rel_path: str) -> bool:
+    name = rel_path.rsplit("/", 1)[-1]
+    return name.endswith(NON_CONTENT_SUFFIXES) or name.startswith("~$") or name == "Thumbs.db"
+
+
 def pack(input_dir: str, hwpx_path: str) -> None:
     """Create HWPX archive from a directory."""
 
@@ -31,7 +41,7 @@ def pack(input_dir: str, hwpx_path: str) -> None:
     all_files = sorted(
         p.relative_to(root).as_posix()
         for p in root.rglob("*")
-        if p.is_file()
+        if p.is_file() and not _is_non_content(p.relative_to(root).as_posix())
     )
 
     with ZipFile(hwpx_path, "w", ZIP_DEFLATED) as zf:

@@ -407,6 +407,71 @@ def check_table_grid(hwpx_path):
     return {"errors": errors, "warnings": warnings}
 
 
+def check_para_spacing(hwpx_path):
+    """문단 위/아래 간격(hc:prev/hc:next)의 일관성 점검.
+
+    문서가 참조하는 paraPr마다 간격이 다르면 한컴 '문단 모양'에서 값이 제각각으로
+    보인다. 실제 한글 문서에서 뽑아 온 header.xml을 템플릿으로 쓸 때 흔하다.
+    또 하나, 같은 값이 hp:case(HwpUnitChar)와 hp:default에 서로 다르게 저장돼
+    있으면 여는 프로그램에 따라 간격이 달라진다.
+    (2026-08-25: report paraPr 27이 위 400/아래 200이라 소제목만 간격이 달랐다)
+
+    Returns: {"errors": [], "warnings": [...]}
+    """
+    import xml.etree.ElementTree as ET
+
+    def ln(e):
+        return e.tag.split("}")[-1]
+
+    warnings = []
+    try:
+        with zipfile.ZipFile(hwpx_path, "r") as zf:
+            header = ET.fromstring(zf.read("Contents/header.xml"))
+            used = set()
+            for name in zf.namelist():
+                if not (name.startswith("Contents/section") and name.endswith(".xml")):
+                    continue
+                for para in ET.fromstring(zf.read(name)).iter():
+                    if ln(para) == "p" and para.get("paraPrIDRef"):
+                        used.add(para.get("paraPrIDRef"))
+    except (KeyError, zipfile.BadZipFile, ET.ParseError) as e:
+        return {"errors": [], "warnings": [f"문단 간격 점검 건너뜀: {e}"]}
+
+    spacing = {}      # paraPr id -> [(prev, next), ...]  (case, default 순)
+    for para_pr in header.iter():
+        if ln(para_pr) != "paraPr" or para_pr.get("id") not in used:
+            continue
+        vals = []
+        for margin in para_pr.iter():
+            if ln(margin) != "margin":
+                continue
+            d = {ln(c): c.get("value") for c in margin}
+            vals.append((d.get("prev", "0"), d.get("next", "0")))
+        if vals:
+            spacing[para_pr.get("id")] = vals
+
+    nonzero = {pid: v for pid, v in spacing.items() if any(x != ("0", "0") for x in v)}
+    distinct = {v[0] for v in spacing.values()}
+    if nonzero and len(distinct) > 1:
+        sample = ", ".join(
+            f"paraPr {pid}(위 {v[0][0]}/아래 {v[0][1]})" for pid, v in sorted(nonzero.items())[:4]
+        )
+        warnings.append(
+            f"문단 위/아래 간격이 문단마다 다름 — {sample}"
+            + (" 외" if len(nonzero) > 4 else "")
+            + ". 한컴 '문단 모양'에서 값이 제각각으로 보인다"
+        )
+
+    mismatched = [pid for pid, v in spacing.items() if len(v) > 1 and len(set(v)) > 1]
+    if mismatched:
+        warnings.append(
+            f"hp:case와 hp:default의 문단 간격이 서로 다름 (paraPr {', '.join(sorted(mismatched)[:6])}) "
+            "— 여는 프로그램에 따라 간격이 달라진다"
+        )
+
+    return {"errors": [], "warnings": warnings}
+
+
 def verify(source_path=None, result_path=None, json_output=None,
             strict=False, spec_path=None, fix_borders=False):
     """HWPX 검수를 실행한다.
@@ -468,6 +533,10 @@ def verify(source_path=None, result_path=None, json_output=None,
     grid_check = check_table_grid(result_path)
     report["issues"].extend(grid_check["errors"])
     report["warnings"].extend(grid_check["warnings"])
+
+    # 1.37. 문단 위/아래 간격 일관성 — '문단 모양' 값이 제각각인 문제 (경고)
+    spacing_check = check_para_spacing(result_path)
+    report["warnings"].extend(spacing_check["warnings"])
 
     # 1.4. 글자 테두리 버그 (모든 글자에 네모 테두리)
     cb = detect_char_border_bug(result_path)
