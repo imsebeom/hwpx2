@@ -33,6 +33,7 @@ ${CLAUDE_SKILL_DIR}/
 │   ├── hwp_to_hwpx_hancom.py    # ★ HWP → HWPX 변환 (Workflow K 1차: 한컴 COM SaveAs, Windows 최우선)
 │   ├── convert_hwp.py           # HWP(바이너리) → HWPX 변환 (Workflow K 폴백: jkf87 순수 Python)
 │   ├── writing_optimizer.py     # ★ 공공기관 보고서 글쓰기 자동 변환 (Workflow P, public-doc-to-hwpx 포팅)
+│   ├── add_equation.py          # ★ 한컴 네이티브 수식 개체 삽입 (본문·표 셀, 규칙 39)
 │   └── office/{unpack,pack}.py
 ├── templates/
 │   ├── base/                  # 베이스 Skeleton
@@ -53,9 +54,11 @@ ${CLAUDE_SKILL_DIR}/
     ├── gonmunseo-2025-writing-rules.md  # ★ 2025-01-08 개정 행정업무규정 룰셋 (수신·항목기호 등, jkf87 차용)
     ├── xml-internals.md       # 저수준 XML 구조
     ├── rhwp-benchmark.md      # rhwp 포팅 배경·표 수식·필드 API 사용법
-    ├── python-hwpx-api.md     # python-hwpx 라이브러리 API 시그니처 + 1.9 ↔ 2.x 마이그레이션
+    ├── python-hwpx-api.md     # python-hwpx API 시그니처 + 버전 매트릭스(2.9.1 설치 / 6.3.0 검증 / 7.0 대비)
+    ├── equation-syntax.md     # ★ 한컴 수식 스크립트 문법 — 검증한 토큰과 함정 3종 (규칙 39)
+    ├── gaejosik-munche.md     # ★ 개조식 실측 — 층별 길이·종결 분포 (교육청 공문 16건 494줄)
     ├── writing-principles.md  # ★ 공공기관 보고서 작성 원칙 (개조식·두괄식·적의것들, public-doc-to-hwpx 포팅)
-    └── layout-rules.md        # ★ 레이아웃 최적화 규칙 + 자동 변환 12개 표 (public-doc-to-hwpx 포팅)
+    └── layout-rules.md        # ★ 레이아웃 최적화 규칙 + 자동 변환 표 (§8-1 장르 게이트, public-doc-to-hwpx 포팅)
 ```
 
 ## rhwp 포팅 요약 (2026-04-18)
@@ -1733,6 +1736,8 @@ subprocess.run(["python3", f"{SKILL_DIR}/scripts/fix_namespaces.py", "output.hwp
 2. **창 없는 `Hwp.exe` 잔여 프로세스를 죽인다.** 실패한 호출이 인스턴스를 남기고, 그것이 쌓이면 캐시를 지워도 새 타입라이브러리를 못 만든다(실측: 닷새 전 것까지 3개가 살아 있었다). `MainWindowTitle`이 비어 있으면 COM 잔여물이라 안전하게 종료할 수 있다 — **제목이 있으면 사용자가 연 문서이므로 건드리지 않는다.** `HAction` 방식보다 `gencache.EnsureDispatch` + `SaveAs(path, "PDF", "")`가 안정적이다
 37. **표 셀 좌표는 cellAddr 격자, 순회는 직계만**: `tr` 안 `tc` 의 순번은 실제 열 위치가 아니다 — `colSpan="2"` 병합이 있으면 순번 0,1,2가 실제로는 열 0,2,4다. 좌표로 셀을 찾을 때는 `build_cell_grid()`처럼 `cellAddr`의 `rowAddr`/`colAddr`을 써야 하며, 순번을 쓰면 엉뚱한 칸을 채운다. 함께 지킬 것은 **순회 범위** — `tbl.iter(tc)`로 훑으면 **셀 안에 든 중첩 표의 셀까지** 바깥 표 것으로 계산된다(실측: 1×1 표 안의 표 4개, 셀 53개가 전부 바깥 격자로 들어가 `verify_hwpx`가 정상 문서를 "셀 주소 중복"으로 FAIL 판정). 반드시 `tbl > tr > tc` 직계 경로로 순회하고, 중첩 표는 상위 순회에서 별도 표로 검사한다
 38. **PrintMethod 는 항상 0(기본 인쇄)으로 정규화한다**: `settings.xml` 의 `PrintMethod` 가 `4`면 **모아 찍기**라서 한컴 `SaveAs(PDF)` 와 인쇄가 A4 한 장에 두 쪽을 얹어 낸다. 외부에서 받은 양식에 이 값이 들어 있으면 편집 산출물이 전부 2-up 으로 나오는데, **문서 내용에는 아무 흔적이 없어 PDF 를 눈으로 보기 전까지 드러나지 않는다**(secPr, pagePr 은 정상이다). `fix_namespaces.py` 와 `zip_replace_all.py` 가 저장 시 `hwpx_helpers.force_default_print_method()` 로 0 을 강제하며, `zip_replace_all` 은 `stats["print_method_reset"]` 로 보고한다. 의도적으로 모아 찍기 양식을 만들 일이 있으면 저장 후 다시 설정한다. 소책자 인쇄는 이 값이 아니라 `/booklet` 스킬(면 재배열)로 처리한다 (2026-08-14 민주시민교육 실습지 양식 실측)
+39. **수식은 이미지가 아니라 개체로 넣는다**: `python scripts/add_equation.py in.hwpx -o out.hwpx --after "앵커" --script "1 over 2"` — 한컴 네이티브 `<hp:equation>` 이라 수식 편집기로 다시 열린다. 표 셀은 `--table/--row/--col`(cellAddr 격자, 규칙 37과 같은 좌표계). 수식은 자기완결 개체라 header.xml·BinData 등록이 필요 없고, `treatAsChar="1"` 이 **맞다**(글자 크기 인라인 개체라 쪽을 넘길 일이 없다 — 표가 0이어야 하는 것과 반대). 문법과 함정은 [references/equation-syntax.md](references/equation-syntax.md): `&` 는 글자가 아니라 **열 구분자**라 그대로 쓰면 사라지고, `matrix` 는 **괄호를 그리지 않아** `LEFT ( matrix{…} RIGHT )` 로 감싸야 한다 (2026-09-08 한컴 개봉·PDF 렌더로 토큰 검증)
+40. **명사형 종결 변환은 보고서에만**: `writing_optimizer.py` 의 R3/R4/R5(`~보입니다`→`예상`, `~판단됩니다`→`판단`, `~예정이었으나 유예`)는 개조식 보고서 문체다. **공문·이메일은 서술형에 경어**(`~하시기 바랍니다`)가 행정 규범이라 적용하면 격식 위반이고, 정규식이 관형형을 남겨 **비문을 만든다** — `적정하게 이행된 것으로 판단됩니다` → `적정하게 이행된 판단`(2026-09-08 실측). 그래서 기본은 검토 권장으로만 보고하고 자동 치환하지 않는다. 보고서 원고에는 `--nominal-endings` 로 켜되, 켠 뒤 앞말은 사람이 명사형으로 고친다. 근거는 [references/layout-rules.md](references/layout-rules.md) §8-1
 
 ---
 

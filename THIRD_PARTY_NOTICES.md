@@ -67,6 +67,21 @@ SOFTWARE.
 
 > raw LLM 파일 탐지(`detect_raw_llm`)와 PreToolUse 가드 훅은 본 스킬의 더미 lineSegArray 주입 전략(polaris-dvc 통과용)과 상충하므로 의도적으로 미차용.
 
+- **추가 차용 (2026-09-08, jkf87 v1.17.0 기준)**: 코드는 가져오지 않았다. 기능 착안과 사실 대조에만 썼다.
+
+| 스킬 내 위치 | jkf87 쪽 | 우리가 한 것 |
+|---|---|---|
+| `scripts/add_equation.py` · `references/equation-syntax.md` | `fill_hwpx.py add-equation` · `references/equation-syntax.md` | 수식 개체 삽입이라는 **기능 착안만** 차용. 봉투 구조는 실물 문항지(수학)에서 직접 추출하고, 토큰은 한컴 개봉·PDF 렌더로 우리가 검증해 적었다 (`&` 열 구분자, `matrix` 괄호 부재 두 함정은 우리 실측) |
+| `references/gaejosik-munche.md` | `references/bogo-munche.md` | 통계를 옮기지 않고 **우리 실물(교육청 공문 16건 494줄)을 직접 측정**했다. jkf87 수치는 교차 검증용으로만 인용 (항목 중앙값 29 대 31로 근사) |
+| `templates/gonmun/` charPr 11 | `templates/gonmun2025/` | 템플릿 XML은 복사하지 않았다(스타일 ID 체계가 다르다). 우리 `official-doc-style.md` 가 이미 규정으로 적어 둔 맑은 고딕 11.5pt를 기존 템플릿에 추가했을 뿐 |
+
+> 줄간격은 따라가지 않았다. jkf87 은 실측으로 160%를 택했으나 우리가 보유한 시행문
+> 1건은 굴림체 11pt·100% 였다. 표본이 부족해 어느 쪽도 표준으로 단정하지 않는다
+> (`official-doc-style.md` 실측 관찰 참조).
+>
+> 문서 유형 생성기(`yoyak`/`geomto`/`gyehoek`/`bodojaryo`), `doc_spec.py`,
+> `html2hwpx.py`, rhwp WASM vendoring 은 이번에 차용하지 않았다.
+
 ---
 
 ## 3. PolarisOffice/polaris_dvc
