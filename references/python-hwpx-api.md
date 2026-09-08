@@ -9,17 +9,51 @@
 
 ## 버전 매트릭스
 
+**현재 설치: 2.9.1** / PyPI 최신: 6.3.0 (2026-08-22). 마지막 대조 2026-09-08.
+
 | python-hwpx | 본 스킬 호환 | 비고 |
 |---|---|---|
-| 1.9 (현재 설치) | ✅ 완전 호환 | `TextExtractor`, `ObjectFinder`, `FoundElement` 만 사용 |
-| 2.0 ~ 2.4 | ⚠️ 부분 호환 | `HwpxDocument` 등 신규 클래스 추가, 기존 API 시그니처 일부 변경 |
-| 2.5 ~ 2.9.1 | ⚠️ 미검증 | airmang/hwpx-skill 기준 버전. 본 스킬 회귀 테스트 미완료 |
-| 1.x 이전 | ❌ 비호환 | API 미존재 |
+| 2.9.1 (현재 설치) | ✅ 검증됨 | 기본 동작 확인 |
+| 6.0 ~ 6.3.0 | ✅ 검증됨 (2026-09-08) | 쓰는 API 전부 존재. 격리 venv 에서 `create_document.py` 생성 + `verify_hwpx.py` 전 항목 통과 |
+| 7.0 이후 | ⚠️ 미출시 | `set_header_text`/`set_footer_text` 제거 예고 — 아래 참조 |
+| 1.x | ❌ 비호환 | API 미존재 |
 
-> 글로벌 업그레이드는 `.test/2026MMDD-airmang-스킬반영/` 류 별도 venv 에서 회귀
-> (학급평가보고서·학급독서통계·사업계획서 strict PASS) 통과 후 결정한다.
+### 본 스킬이 실제로 쓰는 API
 
-## 1.9 (현재 설치) — 사용 중인 API
+`hwpx` 를 직접 import 하는 곳은 세 군데뿐이다. 나머지는 자체 헬퍼와 ZIP/lxml 직접 조작이다.
+
+| 파일 | 사용 심볼 |
+|---|---|
+| `create_document.py` | `HwpxDocument.new/add_paragraph/add_table/save_to_path`, 머리말·꼬리말 |
+| `add_review_memo.py` | `HwpxDocument.open/add_memo_with_anchor/save_to_path` |
+| `text_extract.py` | `TextExtractor` |
+
+5.0 이 `hwpx.agent`, `hwpx.authoring`, `hwpx.exam`, `hwpx.form_fill` 등을 별도 패키지
+`python-hwpx-automation` 으로 옮겼으나 **본 스킬은 그것들을 쓰지 않아 영향이 없다**.
+표·메모·머리말은 core 에 남았다.
+
+### 7.0 에서 깨질 지점 (대비 완료)
+
+6.0 이 머리말·꼬리말 API 를 옮겼고 구 API 는 7.0 에서 제거된다.
+
+```
+DeprecationWarning: HwpxDocument.set_header_text은(는) python-hwpx 6.0에서
+doc.page.set_header(text=...)(으)로 이동했습니다. 7.0에서 제거됩니다.
+```
+
+| 구 API (~6.x, 7.0 제거) | 신 API (6.0~) |
+|---|---|
+| `doc.set_header_text(text, section=…)` | `doc.page.set_header(text=…, section=…)` |
+| `doc.set_footer_text(text, section=…)` | `doc.page.set_footer(text=…, section=…)` |
+
+`create_document.py` 의 `_set_running_text()` 가 `hasattr(doc, "page")` 로 분기해
+두 버전 모두를 처리한다. 2.9.1 과 6.3.0 에서 머리말이 실제로 삽입되는 것을 확인했다.
+
+> 글로벌 업그레이드는 별도 venv 에서 회귀(학급평가보고서·학급독서통계·사업계획서
+> strict PASS) 통과 후 결정한다. 6.3.0 은 위 세 스크립트 범위에서는 통과했으나
+> 전체 회귀는 아직이므로 시스템 설치는 2.9.1 을 유지한다.
+
+## 사용 중인 API 상세
 
 ### 설치와 import
 

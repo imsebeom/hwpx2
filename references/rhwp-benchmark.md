@@ -1,6 +1,6 @@
 # rhwp 벤치마크 및 포팅 가이드
 
-**업데이트**: 2026-04-18
+**업데이트**: 2026-09-08 (원 작성 2026-04-18)
 
 [edwardkim/rhwp](https://github.com/edwardkim/rhwp) (Rust + WASM, MIT) 저장소의 HWPX
 역공학 결과와 알고리즘을 **외부 의존성 없이** hwpx 스킬에 이식했다.
@@ -16,8 +16,23 @@ rhwp는 141K 라인 규모의 성숙한 HWPX 구현체로 다음 영역에서 Py
 4. **zip bomb 방어** (`src/parser/hwpx/reader.rs:19-26`)
 5. **필드 API** (`src/document_core/queries/field_query.rs`)
 
-CLI 바이너리·WASM 패키지는 사용자 환경에 Rust/Node.js 설치를 요구하므로, 본 스킬은
-**알고리즘과 데이터 구조만** Python으로 포팅했다. rhwp 프로젝트는 read-only 참조.
+포팅 당시(v0.7.x) CLI 바이너리·WASM 패키지는 사용자 환경에 Rust/Node.js 설치를
+요구했으므로, 본 스킬은 **알고리즘과 데이터 구조만** Python으로 포팅했다.
+rhwp 프로젝트는 read-only 참조.
+
+> ⚠ **이 전제는 2026-09-08 기준으로 더 이상 사실이 아니다.** v0.8.4(08-12)가
+> "공식 배포 채널 복원"을 내걸었고 v0.8.6(09-02) 릴리스에는 5개 플랫폼 prebuilt가
+> 붙어 있다 — `rhwp-v0.8.6-windows-x86_64.zip`(9.8MB), linux x86_64/aarch64,
+> macOS x86_64/aarch64, `SHA256SUMS.txt`. Rust 툴체인 없이 실행 파일을 바로 쓸 수 있다.
+>
+> 그래도 **알고리즘 포팅 결과물은 그대로 둔다.** 이미 동작하고 의존성이 0이며,
+> 바이너리를 붙이면 9.8MB 자산과 버전 추적 부담이 생긴다. 다시 검토할 만한 경우는
+> 아래 둘뿐이다.
+> - 렌더링·조판 정합처럼 Python 재구현 비용이 큰 기능이 필요해질 때
+> - 산출물을 한컴 없이 PDF/이미지로 뽑아야 할 때(현재는 한컴 COM에 의존)
+>
+> 참고로 jkf87/hwpx-skill 은 `scripts/vendor/rhwp/` 에 WASM 번들을 vendoring 하는
+> 쪽을 택했다. 노선이 다르므로 따라가지 않는다.
 
 ## 1. 표 계산식 엔진 (`scripts/table_calc.py`)
 

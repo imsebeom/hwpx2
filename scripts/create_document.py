@@ -126,6 +126,25 @@ def parse_json_input(text: str) -> list[dict]:
     return blocks
 
 
+def _set_running_text(doc, kind: str, text: str, section) -> None:
+    """머리말·꼬리말을 설정한다.
+
+    python-hwpx 6.0 이 `doc.set_header_text()` 를 `doc.page.set_header(text=...)`
+    로 옮겼고 구 API 는 7.0 에서 제거된다. 설치 버전에 맞는 경로를 고른다.
+    """
+    page = getattr(doc, "page", None)
+    try:
+        if page is not None:
+            getattr(page, f"set_{kind}")(text=text, section=section)
+        else:
+            getattr(doc, f"set_{kind}_text")(text, section=section)
+    except TypeError:
+        print(
+            f"Warning: {kind} 설정 실패 — unpack/pack 워크플로를 쓸 것.",
+            file=sys.stderr,
+        )
+
+
 def create_document(blocks: list[dict], output_path: str) -> None:
     """Create an HWPX document from parsed content blocks."""
 
@@ -154,25 +173,8 @@ def create_document(blocks: list[dict], output_path: str) -> None:
                     if c_idx < num_cols:
                         table.set_cell_text(r_idx, c_idx, str(cell_text))
 
-        elif btype == "header":
-            try:
-                doc.set_header_text(block.get("text", ""), section=section)
-            except TypeError:
-                print(
-                    "Warning: set_header_text() failed (known python-hwpx bug). "
-                    "Use unpack/pack workflow for headers.",
-                    file=sys.stderr,
-                )
-
-        elif btype == "footer":
-            try:
-                doc.set_footer_text(block.get("text", ""), section=section)
-            except TypeError:
-                print(
-                    "Warning: set_footer_text() failed (known python-hwpx bug). "
-                    "Use unpack/pack workflow for footers.",
-                    file=sys.stderr,
-                )
+        elif btype in ("header", "footer"):
+            _set_running_text(doc, btype, block.get("text", ""), section)
 
     doc.save_to_path(output_path)
     print(f"Created: {output_path}")
