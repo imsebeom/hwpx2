@@ -8,6 +8,11 @@
 references/layout-rules.md 표를 독립 재구현한 것이다. 원본 소스 코드는 포함하지 않음.
 https://github.com/Kminer2053/public-doc-to-hwpx
 
+장르 게이트 (2026-09-08): 명사형 종결 R3/R4/R5 는 기본으로 자동 적용하지 않는다.
+공문·이메일은 서술형 + 경어가 규범이라 개조식 종결이 격식 위반이고, 치환이
+관형형을 남겨 비문("이행된 것으로 판단됩니다" → "이행된 판단")을 만들기 때문이다.
+보고서 원고에는 --nominal-endings 로 켠다. 원본도 v3.6.12 에서 같은 제한을 넣었다.
+
 한국어 조사 보강:
   - R6 (`~하는 것이 필요/중요합니다`): 받침 유무로 '이/가' 자동 선택
   - R8 (`여러 ~들이/들을/들에…`): 조사·구두점 다양 lookahead
@@ -112,28 +117,6 @@ AUTO_RULES = [
         "reason": "~와/과 관련된 → ~ 관련",
     },
     {
-        "id": "R3",
-        "pattern": re.compile(
-            r"([가-힣A-Za-z]+)(?:할|될) 것으로 보(?:입니다|인다)"
-        ),
-        "replace": r"\1 예상",
-        "reason": "~할/될 것으로 보입니다/보인다 → ~ 예상",
-    },
-    {
-        "id": "R4",
-        "pattern": re.compile(
-            r"([가-힣A-Za-z]+(?:한|된|진)) 것으로 판단(?:됩니다|된다)"
-        ),
-        "replace": r"\1 판단",
-        "reason": "~한/된/진 것으로 판단됩니다/된다 → ~ 판단",
-    },
-    {
-        "id": "R5",
-        "pattern": re.compile(r"(\S+)할 예정이었으나 이를 유예하였습니다"),
-        "replace": r"\1 예정 → 유예",
-        "reason": "~할 예정이었으나 이를 유예하였습니다 → ~ 예정 → 유예",
-    },
-    {
         "id": "R6a",
         "pattern": re.compile(r"([가-힣A-Za-z]+)하는 것이 필요(?:합니다|하다)"),
         "replace": _r6_need,
@@ -165,6 +148,46 @@ AUTO_RULES = [
         "pattern": re.compile(r"([가-힣])([A-Za-z]{2,})"),
         "replace": r"\1 \2",
         "reason": "한글 뒤 영문 약어 사이 띄어쓰기 추가",
+    },
+]
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 명사형 종결 규칙 — 장르 게이트 (기본 off)
+#
+# 개조식 명사형 종결은 보고서(1p/full) 문체다. 공문과 이메일은 서술형에
+# 경어(~하시기 바랍니다)를 쓰는 것이 행정 규범이므로 여기에 적용하면 격식
+# 위반이다. 원본 public-doc-to-hwpx 가 v3.6.12 (2026-07-23) 에서 같은 이유로
+# 이 변환을 1p/full 양식 전용으로 제한했다.
+#
+# 그와 별개로 정규식 치환 자체가 관형형 수식어를 남겨 비문을 만든다.
+#   "적정하게 이행된 것으로 판단됩니다" → "적정하게 이행된 판단"
+# 앞말을 개조식으로 다시 쓰는 것은 정규식의 일이 아니므로, 자동 적용은
+# --nominal-endings 로 명시할 때만 하고 기본은 검토 권장으로만 보고한다.
+# ──────────────────────────────────────────────────────────────────────
+
+NOMINAL_RULES = [
+    {
+        "id": "R3",
+        "pattern": re.compile(
+            r"([가-힣A-Za-z]+)(?:할|될) 것으로 보(?:입니다|인다)"
+        ),
+        "replace": r"\1 예상",
+        "reason": "~할/될 것으로 보입니다/보인다 → ~ 예상 (보고서 문체. 앞말을 명사형으로 함께 손볼 것)",
+    },
+    {
+        "id": "R4",
+        "pattern": re.compile(
+            r"([가-힣A-Za-z]+(?:한|된|진)) 것으로 판단(?:됩니다|된다)"
+        ),
+        "replace": r"\1 판단",
+        "reason": "~한/된/진 것으로 판단됩니다/된다 → ~ 판단 (보고서 문체. 앞말을 명사형으로 함께 손볼 것)",
+    },
+    {
+        "id": "R5",
+        "pattern": re.compile(r"(\S+)할 예정이었으나 이를 유예하였습니다"),
+        "replace": r"\1 예정 → 유예",
+        "reason": "~할 예정이었으나 이를 유예하였습니다 → ~ 예정 → 유예 (보고서 문체)",
     },
 ]
 
@@ -211,7 +234,7 @@ def _find_line_col(text: str, pos: int) -> Tuple[int, int]:
 
 
 def optimize_text(
-    text: str, *, auto_apply: bool = True
+    text: str, *, auto_apply: bool = True, nominal_endings: bool = False
 ) -> Tuple[str, List[Suggestion]]:
     """텍스트에 글쓰기 최적화 규칙을 적용한다.
 
@@ -219,6 +242,9 @@ def optimize_text(
         text: 입력 텍스트.
         auto_apply: True 면 자동 적용 규칙으로 텍스트를 치환. False 면 변경 없이
             제안만 수집 (dry-run).
+        nominal_endings: True 면 개조식 명사형 종결 규칙(R3/R4/R5)까지 자동
+            치환한다. 보고서 원고에만 쓴다. 기본 False 에서는 검토 권장으로만
+            보고하며 텍스트를 건드리지 않는다 (공문·이메일 격식 보호).
 
     Returns:
         (수정된 텍스트, 제안 목록). 제안은 자동 적용·검토 권장·문장 길이 초과
@@ -247,6 +273,29 @@ def optimize_text(
             )
 
         if auto_apply:
+            new_text = pat.sub(repl, new_text)
+
+    for rule in NOMINAL_RULES:
+        rid = rule["id"]
+        pat = rule["pattern"]
+        repl = rule["replace"]
+        reason = rule["reason"]
+
+        for m in pat.finditer(new_text):
+            before = m.group(0)
+            after = pat.sub(repl, before, count=1)
+            line, col = _find_line_col(new_text, m.start())
+            suggestions.append(
+                Suggestion(
+                    rule_id=rid,
+                    severity="auto" if nominal_endings else "review",
+                    line=line, column=col,
+                    before=before, after=after,
+                    reason=reason,
+                )
+            )
+
+        if auto_apply and nominal_endings:
             new_text = pat.sub(repl, new_text)
 
     for rule in REVIEW_RULES:
@@ -335,6 +384,9 @@ def main():
     p.add_argument("--report", "-r", help="검토 리포트 마크다운 출력 (기본: stderr)")
     p.add_argument("--dry-run", action="store_true",
                    help="자동 적용 없이 제안만 수집")
+    p.add_argument("--nominal-endings", action="store_true",
+                   help="개조식 명사형 종결(R3/R4/R5)까지 자동 치환. 보고서 원고 전용 — "
+                        "공문·이메일은 서술형에 경어를 쓰므로 주지 말 것")
     args = p.parse_args()
 
     if args.input == "-":
@@ -342,7 +394,9 @@ def main():
     else:
         text = Path(args.input).read_text(encoding="utf-8")
 
-    new_text, suggestions = optimize_text(text, auto_apply=not args.dry_run)
+    new_text, suggestions = optimize_text(
+        text, auto_apply=not args.dry_run, nominal_endings=args.nominal_endings
+    )
     report = format_report(suggestions)
 
     if args.output:
