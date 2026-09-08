@@ -70,6 +70,13 @@ def convert(paths):
                 hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
             except Exception as e:
                 print("보안 모듈 등록 생략(팝업이 뜰 수 있음):", e)
+            # 한글 창이 떠서 사용자가 쓰던 창의 포커스를 빼앗는 것을 막는다.
+            # 다른 문서가 이미 열려 있으면(Count>1) 남의 창을 숨길 수 있으므로 건드리지 않는다.
+            try:
+                if hwp.XHwpWindows.Count == 1:
+                    hwp.XHwpWindows.Active_XHwpWindow.Visible = False
+            except Exception:
+                pass
             for f in ole_files:
                 out = os.path.splitext(os.path.abspath(f))[0] + ".hwpx"
                 try:

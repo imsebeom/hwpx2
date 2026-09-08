@@ -276,6 +276,13 @@ def _hancom_to_pdf(src: str, pdf_path: str) -> None:
     hwp = win32.gencache.EnsureDispatch("HWPFrame.HwpObject")
     try:
         hwp.RegisterModule("FilePathCheckDLL", "FilePathCheckerModule")
+        # 한글 창이 떠서 사용자가 쓰던 창의 포커스를 빼앗는 것을 막는다.
+        # 다른 문서가 이미 열려 있으면(Count>1) 남의 창을 숨길 수 있으므로 건드리지 않는다.
+        try:
+            if hwp.XHwpWindows.Count == 1:
+                hwp.XHwpWindows.Active_XHwpWindow.Visible = False
+        except Exception:
+            pass
         if not hwp.Open(src, "", "forceopen:true"):
             raise RuntimeError(f"한글이 파일을 열지 못했다: {src}")
         hwp.SaveAs(pdf_path, "PDF", "")
